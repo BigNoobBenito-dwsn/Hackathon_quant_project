@@ -3,36 +3,75 @@ import numpy as np
 import pygame
 
 def sinc(x: np.ndarray) -> np.ndarray:
-    out = np.ones_like(x)
-    m = np.abs(x) > 1e-12
-    out[m] = np.sin(x[m]) / x[m]
-    return out
+    '''
+    This function is used to compute Sinc(x), which is equal to sin(x)/x. But since x can = 0, we need to compute the limit.
+    x:np.darray -> takes an array x, and returns another array.
+    return out: returns the new sinc array.
+    1. Create an array of same shape as x where all values = 1
+    2. Do [sinc = sinx/x] on all values, EXCEPT the ones where x ~ 0, because division by 0. They remain = 1.
+    3. Return the resulting array
+    '''
+    out = np.ones_like(x) #Step 1: Create an array where all the values are 1, with the same shape as x. 
+    m = np.abs(x) > 1e-12 #boolean ARRAY same shape as x, True if x[ij] != basically 0. We use this so that we don't accidently do a zero division.
+    out[m] = np.sin(x[m]) / x[m] #Only the values where m=True will be affected by this division. All else = 1 (see step 1). 
+    return out 
 
 def intensity_multislit(y: np.ndarray, L: float, lam: float, a: float, d: float, N: int) -> np.ndarray:
-    s = y / max(L, 1e-9)  # sin(theta) ~ y/L
-    beta = math.pi * a * s / max(lam, 1e-9)
-    alpha = math.pi * d * s / max(lam, 1e-9)
+    '''
+    Here, we are computing the intensity pattern on the screen. 
+    The actual formula is:      I(theta) = sinc(beta)^2 x (sin(N * alpha)/sin(alpha))^2
+    The 'envelope' is the first part of the product (sinc(beta)^2). The multi-slit interference is the sceond. 
+    beta = (pi a sintheta / lambda)
+    alpha = (pi d sintheta / lambda)
+    parameters
+        - L: distance to wall 
+        - lam: wavelength 
+        - a: slit width  
+        - d: distance between slits
+        - N: number of fringes
+    Note:
+        -Screen is far from slits (L>>y), so sqrt(L^2 + y^2) ~ L
+            > therefore we can use small angle approx. 
+    '''
+    s = y / max(L, 1e-9)  #Finding sin(theta) using small angle approx.
+    beta = math.pi * a * s / max(lam, 1e-9) #the 1e-9 prevents division by 0
+    alpha = math.pi * d * s / max(lam, 1e-9) 
 
-    envelope = sinc(beta) ** 2
+    envelope = sinc(beta) ** 2 #remember, this is the single-slit diffraction pattern, which is (sinx / x)^2
 
-    denom = np.sin(alpha)
+    denom = np.sin(alpha) #This is to prepare for the second part of the product
     numer = np.sin(N * alpha)
 
-    inter = np.ones_like(alpha)
-    mask = np.abs(denom) > 1e-12
-    inter[mask] = (numer[mask] / denom[mask]) ** 2
-    inter[~mask] = float(N**2)
+    inter = np.ones_like(alpha) #preparing the output array, defaulting all values to 1 (to avoid division by 0 issues)
+    mask = np.abs(denom) > 1e-12 #again, making a boolean mask, true if denom != 0 
+    inter[mask] = (numer[mask] / denom[mask]) ** 2 #if denom!= 0, then do the operation sin(Na)/sin(a)
+    inter[~mask] = float(N**2) #mathematically, lim a->0 of sin(Na) / sin(a) = N^2 
 
-    return np.clip(envelope * inter, 0, None)
+    return np.clip(envelope * inter, 0, None) #Final pattern = envelope x interference. The "0, None" are added to ensure no negative values (min=0, max=None).
 
 def build_sampler(height_px: int, px_to_world: float, L: float, lam: float, a: float, d: float, N: int):
-    ys_world = (np.arange(height_px) - height_px / 2) * px_to_world
-    I = intensity_multislit(ys_world, L=L, lam=lam, a=a, d=d, N=N)
-    if I.max() <= 0:
+    '''
+    Our goal is to simulate particles hitting the detector, so that dots build a similar pattern to theory. 
+    We need a way to:
+        - Compute the Intensity I along the screen 
+        - Turn it into a probability dist (pdf)
+            - p(y) = I(y) / Sum(I)
+        - Build a cumulative dist (cdf) to actually see the random hits efficiently
+            - cdf = previous ps + current p
+    Remember that the formula uses REAL units, so we need to convert the pixel values into world values.
+    returns:
+        - world y positions
+        - intensity curve
+        - probabilities for hits
+        - cumulative probabilities for hits
+    '''
+    ys_world = (np.arange(height_px) - height_px / 2) * px_to_world #Making an array of y positions for every pixel row. Center; y=0, into real units
+    I = intensity_multislit(ys_world, L=L, lam=lam, a=a, d=d, N=N) #Computing the intensity at every y position
+    if I.max() <= 0: #just a safety net. If intensity is somehow broken (negative values or 0), replace all values with 1. 
         I[:] = 1.0
-    pdf = I / I.sum()
-    cdf = np.cumsum(pdf)
-    cdf[-1] = 1.0
+    pdf = I / I.sum() #Finding the probability distribution. Safety net > avoid division by 0
+    cdf = np.cumsum(pdf) #Finding the cumulative distribution
+    cdf[-1] = 1.0 #Forces the last value to be exactly 1, to avoid any rounding errors (ex: if it was 0.999999 by the end)
     return ys_world, I, pdf, cdf
 
 def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
