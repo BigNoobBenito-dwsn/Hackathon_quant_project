@@ -1,40 +1,7 @@
-# superposition_x.py
-# Fullscreen + Bright CRT Menu + Quantum Mode (particles) + Light Mode (waves) + Exhibition X (10 hover cards)
-#
-# Universal:
-#   M = Menu, ESC = Quit
-#
-# Quantum Mode (Particles):
-#   1..5 = slits
-#   [ ]  = slit width a
-#   , .  = slit separation d
-#   - =  = wavelength λ
-#   ; '  = distance L
-#   ↑ ↓  = shots/frame
-#   SPACE = pause, R = reset detector, H = help
-#
-# Light Mode (Waves):
-#   , . = slit separation
-#   - = = wavelength
-#   ← → = phase shift
-#   V   = toggle view (Intensity/Amplitude)
-#   SPACE = pause, R = reset, H = help
-#
-# Exhibition X:
-#   Hover cards to expand + reveal story
-#   H = help, M = menu
-#
-# Run:
-#   pip install pygame numpy
-#   python superposition_x.py
-
 import math
 import numpy as np
 import pygame
 
-# =========================================================
-# Physics helpers (Quantum: Fraunhofer N-slit intensity)
-# =========================================================
 def sinc(x: np.ndarray) -> np.ndarray:
     out = np.ones_like(x)
     m = np.abs(x) > 1e-12
@@ -215,9 +182,9 @@ def clamp_rect(rect, bounds):
 # =========================================================
 # States
 # =========================================================
-STATE_MENU   = "menu"
-STATE_PLAY   = "play"
-STATE_WAVE   = "wave"
+STATE_MENU    = "menu"
+STATE_PLAY    = "play"
+STATE_WAVE    = "wave"
 STATE_EXHIBIT = "exhibit"
 state = STATE_MENU
 
@@ -372,7 +339,6 @@ def draw_quantum():
     q_draw_hud()
 
     pygame.draw.aaline(screen, (55, 55, 70), (LEFT_W, 0), (LEFT_W, H))
-
     draw_crt_vibe()
     if q["show_help"]:
         q_draw_help()
@@ -540,51 +506,71 @@ def draw_wave(dt_sec):
     draw_text(line1, 18, 42, font=FONT, color=ACCENT)
     draw_text(line2, 18, 64, font=FONT_S, color=MUTED)
 
+    # right caption / instructions (restored)
+    cap_x = int(W * 0.76)
+    cap_y = int(H * 0.20)
+    tips = [
+        "Bright = constructive",
+        "Dark = destructive",
+        "",
+        "Try:",
+        "• V for amplitude view",
+        "• ← → shifts fringes",
+        "• - = changes λ",
+        "• , . changes spacing",
+        "",
+        "Goal:",
+        "Build intuition for",
+        "fringe spacing + phase.",
+    ]
+    for i, t in enumerate(tips):
+        draw_text(t, cap_x, cap_y + i * 20, font=FONT_S, color=TXT)
+
     draw_crt_vibe()
     if wave["show_help"]:
         wave_help_overlay()
 
 # =========================================================
-# EXHIBITION X (2x5 hover cards, centered, no overlap)
+# Exhibition X (shifted UP + hover text appears under name/title)
 # =========================================================
 exhibit = {"show_help": False}
 
 EXHIBIT_EVENTS = [
-    (1801, "Thomas Young", "Double-slit experiment",
-     "Light forms bright/dark fringes. A classic proof that waves can interfere.",
-     "See it in Light Mode."),
-    (1865, "J.C. Maxwell", "Electromagnetic waves",
-     "Maxwell’s equations unify electricity + magnetism and describe light as a wave.",
-     "Light Mode builds on this."),
-    (1900, "Max Planck", "Energy quantization",
-     "Energy comes in discrete chunks (quanta). The door opens to particle behavior.",
-     "Sets up Quantum Mode."),
-    (1905, "A. Einstein", "Photoelectric effect",
-     "Light acts like particles (photons): only certain frequencies eject electrons.",
-     "Wave–particle duality begins."),
-    (1924, "L. de Broglie", "Matter waves",
-     "Particles can have a wavelength: λ = h/p. Even electrons can interfere.",
-     "Why particles form fringes."),
-    (1927, "Davisson & Germer", "Electron diffraction",
-     "Electrons scattered from a crystal produce interference peaks—matter behaves like waves.",
-     "Validates Quantum Mode."),
-    (1927, "W. Heisenberg", "Uncertainty principle",
-     "You can’t know position and momentum perfectly at once—measurement changes prediction.",
-     "Explains probabilistic patterns."),
-    (1928, "E. Schrödinger", "Wave equation",
-     "The Schrödinger equation evolves ψ; the pattern is tied to |ψ|².",
-     "Core math behind Quantum Mode."),
+    (1801, "Thomas Young", "Double-slit interference",
+     "Young showed that light through two slits forms bright/dark bands. This is the first clean demonstration of interference—waves can add and cancel.",
+     "Light Mode: fringe pattern origin."),
+    (1865, "J.C. Maxwell", "Light is an EM wave",
+     "Maxwell proved light is an electromagnetic wave. That gives a physical model for wave crests/troughs that can interfere.",
+     "Light Mode: waves are real fields."),
+    (1900, "Max Planck", "Energy comes in quanta",
+     "Planck introduced quantization: energy exchanges happen in discrete packets. This breaks classical continuity and starts modern quantum theory.",
+     "Quantum Mode: discreteness begins."),
+    (1905, "Albert Einstein", "Photons (particle light)",
+     "Einstein explained the photoelectric effect by treating light as photons. Light sometimes behaves like individual hits, not a smooth wave.",
+     "Quantum Mode: particle detection idea."),
+    (1924, "Louis de Broglie", "Matter has wavelength",
+     "De Broglie proposed matter waves: particles have λ = h/p. So electrons should diffract and interfere like light does.",
+     "Bridge: why particles form fringes."),
+    (1927, "Davisson–Germer", "Electron diffraction proven",
+     "They observed interference peaks from electrons scattered off crystals. This confirmed that particles truly behave like waves.",
+     "Quantum Mode: validates your pattern."),
+    (1927, "Werner Heisenberg", "Uncertainty (no exact paths)",
+     "Uncertainty limits knowing position and momentum simultaneously. It supports predicting probabilities instead of single exact trajectories.",
+     "Quantum Mode: why distributions matter."),
+    (1928, "E. Schrödinger", "Wavefunction dynamics",
+     "Schrödinger’s equation evolves ψ over time. The predicted screen pattern comes from |ψ|² (probability density).",
+     "Core: |ψ|² → intensity."),
     (1961, "Claus Jönsson", "Modern electron double-slit",
-     "A clean double-slit setup confirms electron interference in a controlled lab.",
-     "Matches our accumulation demo."),
-    (2020, "Modern era", "Interference today",
-     "Interference + superposition power tools like interferometers and quantum computing ideas.",
+     "Jönsson built a clean electron double-slit apparatus with clear fringes. It’s the modern lab version of what we’re simulating here.",
+     "Quantum Mode: classic confirmation."),
+    (2020, "Modern Era", "Interference in tech",
+     "Interference is now a tool: precision sensing, interferometers, holography, and the logic behind quantum computing uses controlled superposition.",
      "Why Superposition X matters."),
 ]
 
 def exhibit_header_bounds():
     header_top = int(H * 0.08)
-    header_bottom = header_top + 140  # reserved header space
+    header_bottom = header_top + 115
     margin = 18
     safe = pygame.Rect(margin, header_bottom + margin, W - 2*margin, H - (header_bottom + 2*margin))
     return header_top, safe
@@ -602,7 +588,7 @@ def draw_exhibit_help():
         "HELP (H toggles this)",
         "",
         "Exhibition X:",
-        "  • Hover a card to expand it and reveal the story.",
+        "  • Hover a card to expand and reveal what it contributed.",
         "  • 2×5 layout = 10 milestones.",
         "",
         "Keys:",
@@ -644,7 +630,6 @@ class ExhibitCard:
         pygame.draw.rect(surf, bg_col, rect, border_radius=16)
         pygame.draw.rect(surf, border_col, rect, 2, border_radius=16)
 
-        # initials bubble (portrait placeholder)
         bubble_r = 18 if not hover else 20
         bx = rect.x + 22
         by = rect.y + 26
@@ -654,7 +639,6 @@ class ExhibitCard:
         it = FONT_S.render(initials, True, (230, 230, 240))
         surf.blit(it, it.get_rect(center=(bx, by)))
 
-        # header
         year_t = MID.render(str(self.year), True, WARN if hover else TXT)
         surf.blit(year_t, (rect.x + 52, rect.y + 12))
 
@@ -665,20 +649,38 @@ class ExhibitCard:
         surf.blit(title_t, (rect.x + 20, rect.y + 70))
 
         if hover:
-            inner = rect.inflate(-26, -110)
-            inner.y += 86
-            inner.h = max(80, inner.h)
+            # ===== KEY CHANGE: story box starts right under header (under name/title) =====
+            header_h = 92
+            gap = 10
+            inner = pygame.Rect(rect.x + 10, rect.y + header_h, rect.w - 20, rect.h - header_h - gap)
+            inner.h = max(140, inner.h)
+
+            # subtle shadow so it feels "over" the card
+            shadow = inner.copy()
+            shadow.x += 4
+            shadow.y += 4
+            pygame.draw.rect(surf, (0, 0, 0), shadow, border_radius=12)
 
             pygame.draw.rect(surf, (18, 18, 24), inner, border_radius=12)
             pygame.draw.rect(surf, (75, 75, 100), inner, 1, border_radius=12)
 
             padding = 10
             max_w = inner.w - 2 * padding
-            line_h = 18
+            line_h = 17
+
+            footer_h = 20
+            usable_h = inner.h - 2 * padding - footer_h
+            max_lines = max(3, usable_h // line_h)
 
             story_lines = wrap_text(self.story, FONT_S, max_w)
-            max_story_lines = max(1, (inner.h - 2 * padding - 24) // line_h)
-            story_lines = story_lines[:max_story_lines]
+
+            if len(story_lines) > max_lines:
+                story_lines = story_lines[:max_lines]
+                last = story_lines[-1]
+                ell = "…"
+                while FONT_S.size(last + ell)[0] > max_w and len(last) > 0:
+                    last = last[:-1]
+                story_lines[-1] = (last + ell) if last else ell
 
             yy = inner.y + padding
             for ln in story_lines:
@@ -688,16 +690,18 @@ class ExhibitCard:
             hint_lines = wrap_text(self.hint, TINY, max_w)
             if hint_lines:
                 surf.blit(TINY.render(hint_lines[0], True, ACCENT2),
-                          (inner.x + padding, inner.bottom - 18))
+                          (inner.x + padding, inner.bottom - padding - 14))
 
 def build_exhibit_cards():
     cols, rows = 5, 2
     _, safe = exhibit_header_bounds()
 
-    card_w = int(W * 0.165)
-    card_h = int(H * 0.235)
-    gap_x  = int(W * 0.02)
-    gap_y  = int(H * 0.03)
+    gap_x = int(W * 0.015)
+    gap_y = int(H * 0.025)
+
+    card_w = (safe.w - (cols - 1) * gap_x) // cols
+    card_h = (safe.h - (rows - 1) * gap_y) // rows
+    card_h = min(card_h + int(H * 0.015), (safe.h - (rows - 1) * gap_y) // rows)
 
     grid_w = cols * card_w + (cols - 1) * gap_x
     grid_h = rows * card_h + (rows - 1) * gap_y
@@ -737,28 +741,24 @@ def draw_exhibit():
     header_top, safe = exhibit_header_bounds()
 
     title = "Exhibition X"
-    sub   = "Ten milestones of interference & wave–particle behavior"
-    hint  = "Hover a card • M = menu • H = help • ESC = quit"
+    sub   = "Ten milestones explaining how interference became real physics"
 
     tx = W // 2 - BIG.size(title)[0] // 2
     draw_text(title, tx + 3, header_top + 3, font=BIG, color=(10, 40, 70))
     draw_text(title, tx,     header_top,     font=BIG, color=ACCENT)
     draw_text(sub,  W//2 - MID.size(sub)[0]//2,  header_top + 62, font=MID,  color=ACCENT2)
-    draw_text(hint, W//2 - FONT.size(hint)[0]//2, header_top + 92, font=FONT, color=MUTED)
 
-    pygame.draw.line(screen, ACCENT, (W//2 - 380, header_top + 120), (W//2 + 380, header_top + 120), 2)
+    pygame.draw.line(screen, ACCENT, (W//2 - 420, header_top + 104), (W//2 + 420, header_top + 104), 2)
 
     mx, my = pygame.mouse.get_pos()
     hovered = None
 
-    # draw non-hover first
     for i, card in enumerate(EXHIBIT_CARDS):
         if card.is_hover(mx, my):
             hovered = i
         else:
             card.draw(screen, hover=False)
 
-    # draw hovered last so it sits on top of all cards
     if hovered is not None:
         EXHIBIT_CARDS[hovered].draw(screen, hover=True, safe_bounds=safe)
 
@@ -771,9 +771,6 @@ def draw_exhibit():
     if exhibit["show_help"]:
         draw_exhibit_help()
 
-# =========================================================
-# MENU + Buttons
-# =========================================================
 def draw_menu():
     draw_menu_background()
 
@@ -858,6 +855,7 @@ while running:
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 running = False
+
             if event.key == pygame.K_m:
                 set_state(STATE_MENU)
 
