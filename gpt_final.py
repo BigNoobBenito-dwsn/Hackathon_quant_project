@@ -1,316 +1,502 @@
-# app.py
-# Streamlit interactive N-slit quantum simulator (2D split-step Fourier Schrödinger)
-# Run:  streamlit run app.py
+# quantum_slits_pygame.py
+# Run:
+#   pip install pygame numpy
+#   python quantum_slits_pygame.py
 
-import time
+import math
 import numpy as np
-import streamlit as st
-import matplotlib.pyplot as plt
-from scipy.fft import fft2, ifft2, fftfreq
+import pygame
 
-# ----------------------------
-# Core physics helpers
-# ----------------------------
-def make_grid(Nx, Ny, Lx, Ly):
-    x = np.linspace(-Lx/2, Lx/2, Nx, endpoint=False)
-    y = np.linspace(-Ly/2, Ly/2, Ny, endpoint=False)
-    dx = x[1] - x[0]
-    dy = y[1] - y[0]
-    X, Y = np.meshgrid(x, y, indexing="ij")
-    return x, y, dx, dy, X, Y
+# ============================
+# Physics (Fraunhofer N-slit)
+# ============================
+def sinc(x: np.ndarray) -> np.ndarray:
+    out = np.ones_like(x)
+    m = np.abs(x) > 1e-12
+    out[m] = np.sin(x[m]) / x[m]
+    return out
 
-def make_wavepacket(X, Y, dx, dy, x0, y0, sigma, k0):
-    psi = np.exp(-((X - x0)**2 + (Y - y0)**2) / (2*sigma**2)) * np.exp(1j * k0 * X)
-    prob = np.abs(psi)**2
-    norm = np.sum(prob) * dx * dy
-    return psi / np.sqrt(norm + 1e-30)
+def intensity_multislit(y: np.ndarray, L: float, lam: float, a: float, d: float, N: int) -> np.ndarray:
+    s = y / max(L, 1e-9)  # small-angle sin(theta) ~ y/L
+    beta = math.pi * a * s / max(lam, 1e-9)
+    alpha = math.pi * d * s / max(lam, 1e-9)
 
-def make_barrier(X, Y, Nx, Ny, barrier_x, barrier_width, num_slits, slit_sep, slit_width, V0):
-    V = np.zeros((Nx, Ny), dtype=float)
-    barrier_mask = (np.abs(X - barrier_x) < barrier_width/2)
-    V[barrier_mask] = V0
+    envelope = sinc(beta) ** 2
 
-    centers = (np.arange(num_slits) - (num_slits - 1)/2) * slit_sep
-    slits_mask = np.zeros_like(V, dtype=bool)
+    denom = np.sin(alpha)
+    numer = np.sin(N * alpha)
+    inter = np.ones_like(alpha)
+    mask = np.abs(denom) > 1e-12
+    inter[mask] = (numer[mask] / denom[mask]) ** 2
+    inter[~mask] = float(N**2)
+
+    return np.clip(envelope * inter, 0, None)
+
+def build_sampler(height_px: int, px_to_world: float, L: float, lam: float, a: float, d: float, N: int):
+    ys_world = (np.arange(height_px) - height_px / 2) * px_to_world
+    I = intensity_multislit(ys_world, L=L, lam=lam, a=a, d=d, N=N)
+    if I.max() <= 0:
+        I[:] = 1.0
+    pdf = I / I.sum()
+    cdf = np.cumsum(pdf)
+    cdf[-1] = 1.0
+    return ys_world, I, pdf, cdf
+
+def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
+    r = rng.random(n)
+    return np.searchsorted(cdf, r, side="right")
+
+
+# ============================
+# Pygame setup (FULLSCREEN)
+# ============================
+pygame.init()
+pygame.display.set_caption("Quantum Slits")
+
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+W, H = screen.get_size()
+clock = pygame.time.Clock()
+
+FONT   = pygame.font.SysFont("consolas", 18)
+FONT_S = pygame.font.SysFont("consolas", 15)
+BIG    = pygame.font.SysFont("consolas", 46)
+MID    = pygame.font.SysFont("consolas", 24)
+
+# Layout (scale with fullscreen size)
+LEFT_W = int(W * 0.33)
+CENTER_X = LEFT_W
+DETECTOR_X = int(W * 0.82)
+
+# Visual scaling: world units per pixel in y
+PX_TO_WORLD = 0.02
+
+# Theme
+BG = (18, 18, 22)
+PANEL = (28, 28, 34)
+PANEL2 = (32, 32, 40)
+TXT = (235, 235, 235)
+MUTED = (185, 185, 185)
+ACCENT = (80, 180, 255)
+ACCENT2 = (70, 220, 150)
+WARN = (255, 210, 120)
+RED = (190, 70, 70)
+
+rng = np.random.default_rng()
+
+# ============================
+# App state
+# ============================
+STATE_MENU = "menu"
+STATE_SETTINGS = "settings"
+STATE_ABOUT = "about"
+STATE_PLAY = "play"
+state = STATE_MENU
+
+# ============================
+# Sim parameters (editable)
+# ============================
+params = {
+    "N_slits": 2,
+    "a": 0.35,        # slit width
+    "d": 1.25,        # slit separation
+    "lam": 0.20,      # wavelength
+    "L": 12.0,        # screen distance
+    "shots_per_frame": 300,
+    "paused": False,
+    "reset_on_change": False,
+    "show_help": False,   # toggled in-game with H
+}
+
+# Accumulation arrays / surfaces
+counts = np.zeros(H, dtype=np.float64)
+hits_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+
+# Distribution
+ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, params["L"], params["lam"], params["a"], params["d"], params["N_slits"])
+last_dist_sig = None
+
+def dist_signature():
+    return (params["N_slits"], round(params["a"], 4), round(params["d"], 4), round(params["lam"], 4), round(params["L"], 4))
+
+def rebuild_distribution():
+    global ys_world, I_world, pdf, cdf, last_dist_sig
+    ys_world, I_world, pdf, cdf = build_sampler(
+        H, PX_TO_WORLD,
+        params["L"], params["lam"], params["a"], params["d"], params["N_slits"]
+    )
+    last_dist_sig = dist_signature()
+
+def reset_pattern():
+    counts[:] = 0
+    hits_surf.fill((0, 0, 0, 0))
+
+def add_hits(n_hits: int):
+    ys = sample_y(cdf, rng, n_hits)
+    np.add.at(counts, ys, 1.0)
+    # draw dots near detector line
+    for y in ys:
+        x = DETECTOR_X - rng.integers(0, 10)
+        pygame.draw.circle(hits_surf, (80, 180, 255, 35), (int(x), int(y)), 2)
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+# ============================
+# UI helpers
+# ============================
+class Button:
+    def __init__(self, rect, text, onclick, *,
+                 bg=(40, 40, 50), hover=(55, 55, 70), fg=TXT, font=MID):
+        self.rect = pygame.Rect(rect)
+        self.text = text
+        self.onclick = onclick
+        self.bg = bg
+        self.hover = hover
+        self.fg = fg
+        self.font = font
+
+    def draw(self, surf):
+        mx, my = pygame.mouse.get_pos()
+        is_hover = self.rect.collidepoint(mx, my)
+        pygame.draw.rect(surf, self.hover if is_hover else self.bg, self.rect, border_radius=12)
+        pygame.draw.rect(surf, (90, 90, 110), self.rect, width=2, border_radius=12)
+        t = self.font.render(self.text, True, self.fg)
+        surf.blit(t, t.get_rect(center=self.rect.center))
+
+    def handle(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.onclick()
+
+def draw_text(surf, text, x, y, font=FONT, color=TXT):
+    surf.blit(font.render(text, True, color), (x, y))
+
+def draw_multiline(surf, lines, x, y, font=FONT, color=TXT, line_h=22):
+    yy = y
+    for line in lines:
+        draw_text(surf, line, x, yy, font=font, color=color)
+        yy += line_h
+
+# ============================
+# Quantum screen drawing (CLEANER)
+# ============================
+def draw_slits_diagram():
+    barrier_x = CENTER_X - 40
+    pygame.draw.rect(screen, RED, (barrier_x, 0, 20, H))
+
+    centers = (np.arange(params["N_slits"]) - (params["N_slits"] - 1) / 2) * params["d"]
     for c in centers:
-        slits_mask |= (np.abs(Y - c) < slit_width/2)
+        y_center_px = int(H / 2 + c / PX_TO_WORLD)
+        half_w_px = int((params["a"] / 2) / PX_TO_WORLD)
+        pygame.draw.rect(screen, BG, (barrier_x, y_center_px - half_w_px, 20, 2 * half_w_px))
 
-    V[barrier_mask & slits_mask] = 0.0
-    return V
+def draw_detector_and_hist():
+    pygame.draw.line(screen, TXT, (DETECTOR_X, 0), (DETECTOR_X, H), 2)
 
-def make_kspace(Nx, Ny, dx, dy):
-    kx = 2*np.pi * fftfreq(Nx, d=dx)
-    ky = 2*np.pi * fftfreq(Ny, d=dy)
-    KX, KY = np.meshgrid(kx, ky, indexing="ij")
-    K2 = KX**2 + KY**2
-    return K2
+    maxc = counts.max()
+    if maxc <= 0:
+        maxc = 1.0
 
-def make_absorber(X, Y, Lx, Ly, strength=2.0, power=10):
-    rx = np.abs(X) / (Lx/2)
-    ry = np.abs(Y) / (Ly/2)
-    r = np.maximum(rx, ry)
-    return np.exp(-strength * (r**power))
+    plot_x0 = DETECTOR_X + 16
+    plot_w = max(120, W - plot_x0 - 20)
 
-def x_expectation(psi, X, dx, dy):
-    prob = np.abs(psi)**2
-    return np.sum(prob * X) * dx * dy
+    # histogram bars
+    for y in range(H):
+        v = counts[y] / maxc
+        bar = int(v * plot_w)
+        if bar > 0:
+            screen.fill(ACCENT2, (plot_x0, y, bar, 1))
 
-def step_split(psi, U_V, U_K, absorber):
-    psi = U_V * psi
-    psi_k = fft2(psi)
-    psi_k *= U_K
-    psi = ifft2(psi_k)
-    psi = U_V * psi
-    psi *= absorber
-    return psi
+    pygame.draw.rect(screen, (200, 200, 200), (plot_x0, 0, plot_w, H), 1)
 
-def render_figure(x, y, psi, V, x_screen, screen_accum, shots, num_slits, cmap_name="viridis"):
-    prob = np.abs(psi)**2
-    display = np.log(prob + 1e-12)
-    display = np.nan_to_num(display, neginf=-30, posinf=0)
+def draw_minimal_hud():
+    # minimal overlay (values only + 3 key hints)
+    hud_h = 78
+    hud = pygame.Surface((W, hud_h), pygame.SRCALPHA)
+    hud.fill((0, 0, 0, 140))
+    screen.blit(hud, (0, 0))
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), dpi=120)
+    title = "Quantum Slits"
+    status = "PAUSED" if params["paused"] else "RUNNING"
+    line1 = f"N={params['N_slits']}   a={params['a']:.2f}   d={params['d']:.2f}   λ={params['lam']:.3f}   L={params['L']:.1f}   shots/frame={params['shots_per_frame']}   {status}"
+    line2 = "Keys: H help   M menu   SPACE pause   R reset"
 
-    im = ax1.imshow(
-        display.T,
-        origin="lower",
-        extent=[x.min(), x.max(), y.min(), y.max()],
-        interpolation="nearest",
-        aspect="equal",
-        cmap=cmap_name
+    draw_text(screen, title, 18, 12, font=MID, color=TXT)
+    draw_text(screen, line1, 18, 40, font=FONT, color=ACCENT)
+    draw_text(screen, line2, 18, 58, font=FONT_S, color=MUTED)
+
+def draw_help_overlay():
+    # Only shown when H toggled ON (so screen is not crowded)
+    pad = 18
+    w = int(W * 0.52)
+    h = int(H * 0.62)
+    x = int(W * 0.24)
+    y = int(H * 0.18)
+
+    panel = pygame.Surface((w, h), pygame.SRCALPHA)
+    panel.fill((20, 20, 26, 240))
+    pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
+
+    lines = [
+        "HELP (toggle with H)",
+        "",
+        "Simulation controls:",
+        "  1..5        number of slits (N)",
+        "  [ / ]       slit width a",
+        "  , / .       slit separation d",
+        "  - / =       wavelength λ",
+        "  ; / '       screen distance L",
+        "  ↑ / ↓       shots per frame",
+        "",
+        "General:",
+        "  SPACE       pause / run",
+        "  R           reset pattern",
+        "  M           back to menu",
+        "  ESC         quit",
+        "",
+        "Model:",
+        "  I(y) ∝ sinc²(π a y/(λ L)) × (sin(Nα)/sin α)²",
+        "  α = π d y/(λ L)   (Fraunhofer / far-field)"
+    ]
+
+    yy = pad
+    for i, line in enumerate(lines):
+        f = MID if i == 0 else FONT
+        c = WARN if i == 0 else TXT
+        panel.blit(f.render(line, True, c), (pad, yy))
+        yy += 26 if i == 0 else 22
+
+    screen.blit(panel, (x, y))
+
+def draw_play_screen():
+    screen.fill(BG)
+    screen.blit(hits_surf, (0, 0))
+    draw_slits_diagram()
+    draw_detector_and_hist()
+    draw_minimal_hud()
+
+    # separators
+    pygame.draw.line(screen, (60, 60, 75), (LEFT_W, 0), (LEFT_W, H), 2)
+    pygame.draw.line(screen, (60, 60, 75), (DETECTOR_X, 0), (DETECTOR_X, H), 2)
+
+    if params["show_help"]:
+        draw_help_overlay()
+
+# ============================
+# Menu / Settings / About screens
+# ============================
+def set_state(new_state):
+    global state
+    state = new_state
+
+def build_menus():
+    # cleaner title + centered buttons
+    btn_w, btn_h = 320, 62
+    cx = W // 2 - btn_w // 2
+    top = int(H * 0.45)
+    gap = 16
+
+    menu_buttons = [
+        Button((cx, top + 0*(btn_h+gap), btn_w, btn_h), "Play",     lambda: set_state(STATE_PLAY)),
+        Button((cx, top + 1*(btn_h+gap), btn_w, btn_h), "Settings", lambda: set_state(STATE_SETTINGS)),
+        Button((cx, top + 2*(btn_h+gap), btn_w, btn_h), "About",    lambda: set_state(STATE_ABOUT)),
+        Button((cx, top + 3*(btn_h+gap), btn_w, btn_h), "Quit",     lambda: pygame.event.post(pygame.event.Event(pygame.QUIT))),
+    ]
+
+    settings_buttons = [
+        Button((60, H-80, 200, 56), "Back", lambda: set_state(STATE_MENU)),
+        Button((280, H-80, 260, 56), "Reset Pattern", reset_pattern),
+        Button((560, H-80, 320, 56), "Toggle Reset-on-Change", lambda: toggle_reset_on_change()),
+    ]
+
+    about_buttons = [
+        Button((60, H-80, 200, 56), "Back", lambda: set_state(STATE_MENU)),
+        Button((280, H-80, 260, 56), "Reset Pattern", reset_pattern),
+    ]
+
+    return menu_buttons, settings_buttons, about_buttons
+
+def toggle_reset_on_change():
+    params["reset_on_change"] = not params["reset_on_change"]
+
+menu_buttons, settings_buttons, about_buttons = build_menus()
+
+def draw_menu():
+    screen.fill(BG)
+
+    # Clean title block
+    title_y = int(H * 0.18)
+    draw_text(screen, "Quantum Slits", W//2 - BIG.size("Quantum Slits")[0]//2, title_y, font=BIG, color=ACCENT)
+    draw_text(
+        screen,
+        "Build interference patterns shot-by-shot.",
+        W//2 - MID.size("Build interference patterns shot-by-shot.")[0]//2,
+        title_y + 60,
+        font=MID,
+        color=TXT
+    )
+    draw_text(
+        screen,
+        "Press Play to start. In-game: H for help, M for menu.",
+        W//2 - FONT.size("Press Play to start. In-game: H for help, M for menu.")[0]//2,
+        title_y + 95,
+        font=FONT,
+        color=MUTED
     )
 
-    barrier_visual = (V > 0).astype(float)
-    ax1.imshow(
-        barrier_visual.T,
-        origin="lower",
-        extent=[x.min(), x.max(), y.min(), y.max()],
-        cmap="Reds",
-        alpha=0.7,
-        interpolation="nearest"
-    )
+    for b in menu_buttons:
+        b.draw(screen)
 
-    ax1.axvline(x_screen, color="white", linestyle="--", linewidth=1)
-    ax1.set_title(f"log(|ψ|²) | shots={shots} | slits={num_slits}")
-    ax1.set_xlabel("x")
-    ax1.set_ylabel("y")
+def draw_settings():
+    screen.fill(BG)
+    draw_text(screen, "Settings", 60, 50, font=BIG, color=ACCENT)
 
-    if screen_accum.max() > 0:
-        ax2.plot(y, screen_accum / screen_accum.max())
-        ax2.set_ylim(0, 1)
-    else:
-        ax2.plot(y, screen_accum)
-        ax2.set_ylim(0, 1)
+    pygame.draw.rect(screen, PANEL, (60, 120, W-120, H-220), border_radius=18)
+    pygame.draw.rect(screen, (90, 90, 110), (60, 120, W-120, H-220), width=2, border_radius=18)
 
-    ax2.set_title("Detector accumulation (normalized)")
-    ax2.set_xlabel("y")
-    ax2.set_ylabel("Intensity")
+    lines = [
+        "Adjust values in-game with keys (fast):",
+        "  1..5 slits | [ ] width | , . separation | - = wavelength | ; ' distance | ↑↓ shots",
+        "",
+        f"Current:  N={params['N_slits']}   a={params['a']:.2f}   d={params['d']:.2f}   λ={params['lam']:.3f}   L={params['L']:.1f}",
+        f"Shots/frame: {params['shots_per_frame']}",
+        f"Reset-on-change: {'ON' if params['reset_on_change'] else 'OFF'}",
+        "",
+        "Tip: More slits -> sharper peaks. Bigger λ -> wider fringes."
+    ]
+    draw_multiline(screen, lines, 90, 160, font=FONT, color=TXT, line_h=26)
 
-    plt.tight_layout()
-    return fig
+    for b in settings_buttons:
+        b.draw(screen)
 
-# ----------------------------
-# Streamlit UI
-# ----------------------------
-st.set_page_config(page_title="Quantum Slits Lab", layout="wide")
-st.title("Quantum Slits Lab (Interactive)")
+def draw_about():
+    screen.fill(BG)
+    draw_text(screen, "About", 60, 50, font=BIG, color=ACCENT)
 
-with st.sidebar:
-    st.header("Controls")
+    pygame.draw.rect(screen, PANEL, (60, 120, W-120, H-220), border_radius=18)
+    pygame.draw.rect(screen, (90, 90, 110), (60, 120, W-120, H-220), width=2, border_radius=18)
 
-    # Display controls
-    cmap_name = st.selectbox("Blob colormap", ["viridis", "plasma", "inferno", "magma", "cividis", "Blues", "coolwarm"], index=0)
+    lines = [
+        "This is a real-time visualizer of multi-slit interference (far-field / Fraunhofer).",
+        "",
+        "Each dot is one 'detection event' sampled from:",
+        "  I(y) ∝ sinc²(π a y/(λ L)) × (sin(Nα)/sin α)²,  α = π d y/(λ L)",
+        "",
+        "Hackathon idea upgrades:",
+        "  • overlay theoretical curve on histogram",
+        "  • add decoherence slider (blend toward single-slit envelope)",
+        "  • export screenshot / GIF",
+    ]
+    draw_multiline(screen, lines, 90, 160, font=FONT, color=TXT, line_h=26)
 
-    # Physics / grid (keep Nx,Ny moderate; Streamlit loops can be slow)
-    Nx = st.selectbox("Nx (grid x)", [128, 192, 256], index=0)
-    Ny = st.selectbox("Ny (grid y)", [128, 192, 256], index=0)
-    Lx = st.slider("Lx (domain width)", 10.0, 30.0, 20.0, 0.5)
-    Ly = st.slider("Ly (domain height)", 10.0, 30.0, 20.0, 0.5)
+    for b in about_buttons:
+        b.draw(screen)
 
-    dt = st.slider("dt (timestep)", 0.0005, 0.0050, 0.0015, 0.0001)
-    steps_per_frame = st.slider("Steps per frame", 1, 12, 4, 1)
-    fps = st.slider("FPS (approx)", 5, 60, 25, 1)
+# ============================
+# In-game key controls
+# ============================
+def apply_play_keys(keys):
+    # number of slits
+    if keys[pygame.K_1]: params["N_slits"] = 1
+    if keys[pygame.K_2]: params["N_slits"] = 2
+    if keys[pygame.K_3]: params["N_slits"] = 3
+    if keys[pygame.K_4]: params["N_slits"] = 4
+    if keys[pygame.K_5]: params["N_slits"] = 5
 
-    st.divider()
-    st.subheader("Wave packet")
-    x0 = st.slider("Start x0", -Lx/2 + 1.0, -1.0, -8.0, 0.5)
-    y0 = st.slider("Start y0", -Ly/2 + 1.0, Ly/2 - 1.0, 0.0, 0.5)
-    sigma = st.slider("Sigma (width)", 0.2, 2.0, 0.6, 0.05)
-    k0 = st.slider("k0 (momentum)", 2.0, 25.0, 12.0, 0.5)
+    # width a
+    if keys[pygame.K_LEFTBRACKET]:  params["a"] -= 0.01
+    if keys[pygame.K_RIGHTBRACKET]: params["a"] += 0.01
 
-    st.divider()
-    st.subheader("Barrier / slits")
-    num_slits = st.radio("Number of slits", [1, 2, 3, 4, 5], index=1, horizontal=True)
-    barrier_x = st.slider("Barrier x", -5.0, 5.0, -1.0, 0.1)
-    barrier_width = st.slider("Barrier thickness", 0.1, 2.0, 0.5, 0.1)
-    slit_sep = st.slider("Slit separation", 0.5, 5.0, 2.0, 0.1)
-    slit_width = st.slider("Slit width", 0.1, 2.0, 0.5, 0.1)
-    V0 = st.slider("Barrier height V0", 500.0, 10000.0, 5000.0, 500.0)
+    # separation d
+    if keys[pygame.K_COMMA]:  params["d"] -= 0.02
+    if keys[pygame.K_PERIOD]: params["d"] += 0.02
 
-    st.divider()
-    st.subheader("Detector / absorber")
-    x_screen = st.slider("Screen x", -Lx/2 + 1.0, Lx/2 - 1.0, 7.0, 0.5)
-    absorber_strength = st.slider("Absorber strength", 0.0, 5.0, 2.0, 0.1)
-    absorber_power = st.slider("Absorber power", 2, 20, 10, 1)
+    # wavelength
+    if keys[pygame.K_MINUS]:  params["lam"] -= 0.005
+    if keys[pygame.K_EQUALS]: params["lam"] += 0.005
 
-    st.divider()
-    mode = st.selectbox("Run mode", ["Live animation", "Batch (fast accumulation)"], index=0)
-    batch_shots = st.slider("Batch shots", 1, 200, 40, 1)
-    batch_steps_per_shot = st.slider("Batch steps/shot", 50, 1500, 450, 25)
+    # distance
+    if keys[pygame.K_SEMICOLON]: params["L"] -= 0.1
+    if keys[pygame.K_QUOTE]:     params["L"] += 0.1
 
-# ----------------------------
-# Session state (keeps sim running across reruns)
-# ----------------------------
-def params_signature():
-    # Any change here triggers a reset
-    return (
-        Nx, Ny, Lx, Ly, dt, steps_per_frame,
-        x0, y0, sigma, k0,
-        num_slits, barrier_x, barrier_width, slit_sep, slit_width, V0,
-        x_screen, absorber_strength, absorber_power
-    )
+    # shots
+    if keys[pygame.K_DOWN]: params["shots_per_frame"] = max(10, params["shots_per_frame"] - 30)
+    if keys[pygame.K_UP]:   params["shots_per_frame"] = min(7000, params["shots_per_frame"] + 30)
 
-def init_sim():
-    hbar = 1.0
-    m = 1.0
+    # clamp
+    params["a"]   = clamp(params["a"],   0.05, 1.50)
+    params["d"]   = clamp(params["d"],   0.10, 6.00)
+    params["lam"] = clamp(params["lam"], 0.02, 1.50)
+    params["L"]   = clamp(params["L"],   2.00, 60.0)
 
-    x, y, dx, dy, X, Y = make_grid(Nx, Ny, Lx, Ly)
-    K2 = make_kspace(Nx, Ny, dx, dy)
-    V = make_barrier(X, Y, Nx, Ny, barrier_x, barrier_width, num_slits, slit_sep, slit_width, V0)
+# ============================
+# Main loop
+# ============================
+running = True
+while running:
+    clock.tick(60)
 
-    U_V = np.exp(-1j * V * dt / (2*hbar))
-    U_K = np.exp(-1j * (hbar * K2) * dt / (2*m))
-    absorber = make_absorber(X, Y, Lx, Ly, strength=absorber_strength, power=absorber_power)
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
 
-    psi = make_wavepacket(X, Y, dx, dy, x0, y0, sigma, k0)
+        # MENU/SETTINGS/ABOUT button handling
+        if state == STATE_MENU:
+            for b in menu_buttons:
+                b.handle(event)
+        elif state == STATE_SETTINGS:
+            for b in settings_buttons:
+                b.handle(event)
+        elif state == STATE_ABOUT:
+            for b in about_buttons:
+                b.handle(event)
 
-    screen = np.zeros(Ny, dtype=float)
-    shots = 0
-    screen_idx = int(np.argmin(np.abs(x - x_screen)))
+        if event.type == pygame.KEYDOWN:
+            # Global quit
+            if event.key == pygame.K_ESCAPE:
+                running = False
 
-    return {
-        "hbar": hbar, "m": m,
-        "x": x, "y": y, "dx": dx, "dy": dy, "X": X, "Y": Y,
-        "K2": K2, "V": V,
-        "U_V": U_V, "U_K": U_K, "absorber": absorber,
-        "psi": psi,
-        "screen": screen, "shots": shots,
-        "screen_idx": screen_idx,
-        "sig": params_signature(),
-        "running": False
-    }
+            # PLAY screen keys
+            if state == STATE_PLAY:
+                if event.key == pygame.K_SPACE:
+                    params["paused"] = not params["paused"]
+                if event.key == pygame.K_r:
+                    reset_pattern()
+                if event.key == pygame.K_h:
+                    params["show_help"] = not params["show_help"]
+                if event.key == pygame.K_m:
+                    set_state(STATE_MENU)
 
-if "sim" not in st.session_state:
-    st.session_state.sim = init_sim()
+            # From other screens, allow quick return to menu with M
+            else:
+                if event.key == pygame.K_m:
+                    set_state(STATE_MENU)
 
-# Reset if params changed
-if st.session_state.sim["sig"] != params_signature():
-    st.session_state.sim = init_sim()
+    # ---- State update/draw ----
+    if state == STATE_PLAY:
+        keys = pygame.key.get_pressed()
+        apply_play_keys(keys)
 
-sim = st.session_state.sim
+        sig = dist_signature()
+        if sig != last_dist_sig:
+            rebuild_distribution()
+            if params["reset_on_change"]:
+                reset_pattern()
 
-# ----------------------------
-# Buttons (Start/Stop/Step/Reset)
-# ----------------------------
-colA, colB, colC, colD = st.columns([1, 1, 1, 2])
-with colA:
-    if st.button("▶ Start", use_container_width=True):
-        sim["running"] = True
-with colB:
-    if st.button("⏸ Stop", use_container_width=True):
-        sim["running"] = False
-with colC:
-    if st.button("⏭ Step once", use_container_width=True):
-        sim["running"] = False
-        # one visual update worth of physics
-        for _ in range(steps_per_frame):
-            sim["psi"] = step_split(sim["psi"], sim["U_V"], sim["U_K"], sim["absorber"])
-        I = np.abs(sim["psi"][sim["screen_idx"], :])**2
-        sim["screen"] += I
-with colD:
-    if st.button("🔄 Reset (clear detector)", use_container_width=True):
-        st.session_state.sim = init_sim()
-        sim = st.session_state.sim
+        if not params["paused"]:
+            add_hits(params["shots_per_frame"])
 
-st.caption(
-    r"Detector math:  $I(y) = |\psi(x_{\mathrm{screen}}, y, t)|^2$  (accumulated over many shots)."
-)
+        draw_play_screen()
 
-# ----------------------------
-# Main display
-# ----------------------------
-plot_placeholder = st.empty()
-info_col1, info_col2 = st.columns(2)
+    elif state == STATE_MENU:
+        draw_menu()
 
-def draw_once():
-    fig = render_figure(
-        sim["x"], sim["y"], sim["psi"], sim["V"], x_screen,
-        sim["screen"], sim["shots"], num_slits, cmap_name=cmap_name
-    )
-    plot_placeholder.pyplot(fig, clear_figure=True)
-    plt.close(fig)
+    elif state == STATE_SETTINGS:
+        draw_settings()
 
-def do_live_tick():
-    # evolve physics
-    for _ in range(steps_per_frame):
-        sim["psi"] = step_split(sim["psi"], sim["U_V"], sim["U_K"], sim["absorber"])
+    elif state == STATE_ABOUT:
+        draw_about()
 
-    # add detector intensity
-    I = np.abs(sim["psi"][sim["screen_idx"], :])**2
-    sim["screen"] += I
+    pygame.display.flip()
 
-    # if wave passed screen, fire a new one (new "shot")
-    x_mean = x_expectation(sim["psi"], sim["X"], sim["dx"], sim["dy"])
-    if x_mean > x_screen:
-        sim["psi"] = make_wavepacket(sim["X"], sim["Y"], sim["dx"], sim["dy"], x0, y0, sigma, k0)
-        sim["shots"] += 1
-
-def run_batch():
-    # Batch mode: repeatedly "fire" shots, accumulate pattern faster (no live animation loop)
-    for _ in range(batch_shots):
-        # reset wavepacket for each shot
-        sim["psi"] = make_wavepacket(sim["X"], sim["Y"], sim["dx"], sim["dy"], x0, y0, sigma, k0)
-
-        for _ in range(batch_steps_per_shot):
-            sim["psi"] = step_split(sim["psi"], sim["U_V"], sim["U_K"], sim["absorber"])
-
-        I = np.abs(sim["psi"][sim["screen_idx"], :])**2
-        sim["screen"] += I
-        sim["shots"] += 1
-
-# Batch controls
-if mode == "Batch (fast accumulation)":
-    if st.button("⚡ Run batch now", use_container_width=True):
-        sim["running"] = False
-        run_batch()
-
-# Draw current frame
-draw_once()
-
-with info_col1:
-    st.write(
-        f"**Shots:** {sim['shots']}  \n"
-        f"**Grid:** {Nx}×{Ny}  \n"
-        f"**dt:** {dt}  | **steps/frame:** {steps_per_frame}  \n"
-        f"**Slits:** {num_slits}  | **sep:** {slit_sep}  | **width:** {slit_width}  \n"
-        f"**k0:** {k0}  | **sigma:** {sigma}"
-    )
-
-with info_col2:
-    st.write(
-        "Tips:\n"
-        "- More slits → sharper, more frequent peaks (grating).\n"
-        "- Smaller slit width → stronger diffraction envelope.\n"
-        "- Larger k0 → shorter wavelength → tighter fringes.\n"
-        "- If it’s slow: reduce Nx/Ny or use Batch mode."
-    )
-
-# ----------------------------
-# Live animation loop (Streamlit style)
-# ----------------------------
-# Streamlit reruns the script; to animate we do: tick -> draw -> sleep -> rerun.
-if mode == "Live animation" and sim["running"]:
-    do_live_tick()
-    draw_once()
-    time.sleep(1.0 / max(1, fps))
-    st.rerun()
+pygame.quit()
