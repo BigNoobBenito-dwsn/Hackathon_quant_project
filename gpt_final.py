@@ -1,14 +1,9 @@
-# quantum_slits_pygame.py
-# Run:
-#   pip install pygame numpy
-#   python quantum_slits_pygame.py
-
 import math
 import numpy as np
 import pygame
 
 # ============================
-# Physics (Fraunhofer N-slit)
+# Physics (Quantum: Fraunhofer N-slit sampling)
 # ============================
 def sinc(x: np.ndarray) -> np.ndarray:
     out = np.ones_like(x)
@@ -17,14 +12,14 @@ def sinc(x: np.ndarray) -> np.ndarray:
     return out
 
 def intensity_multislit(y: np.ndarray, L: float, lam: float, a: float, d: float, N: int) -> np.ndarray:
-    s = y / max(L, 1e-9)  # small-angle sin(theta) ~ y/L
+    s = y / max(L, 1e-9)  # sin(theta) ~ y/L
     beta = math.pi * a * s / max(lam, 1e-9)
     alpha = math.pi * d * s / max(lam, 1e-9)
 
     envelope = sinc(beta) ** 2
-
     denom = np.sin(alpha)
     numer = np.sin(N * alpha)
+
     inter = np.ones_like(alpha)
     mask = np.abs(denom) > 1e-12
     inter[mask] = (numer[mask] / denom[mask]) ** 2
@@ -59,19 +54,18 @@ clock = pygame.time.Clock()
 
 FONT   = pygame.font.SysFont("consolas", 18)
 FONT_S = pygame.font.SysFont("consolas", 15)
-BIG    = pygame.font.SysFont("consolas", 46)
+BIG    = pygame.font.SysFont("consolas", 48)
 MID    = pygame.font.SysFont("consolas", 24)
 
-# Layout (scale with fullscreen size)
 LEFT_W = int(W * 0.33)
 CENTER_X = LEFT_W
 DETECTOR_X = int(W * 0.82)
 
-# Visual scaling: world units per pixel in y
 PX_TO_WORLD = 0.02
 
 # Theme
 BG = (18, 18, 22)
+PLAY_BG = (22, 22, 28)
 PANEL = (28, 28, 34)
 TXT = (235, 235, 235)
 MUTED = (185, 185, 185)
@@ -83,25 +77,21 @@ RED = (190, 70, 70)
 rng = np.random.default_rng()
 
 # ============================
-# CRT / Vibe overlays
+# CRT / vibe overlays (bright)
 # ============================
-def build_scanlines_surface(w, h, line_gap=3, alpha=28):
-    """Gray horizontal scanlines like old TVs."""
+def build_scanlines_surface(w, h, line_gap=3, alpha=14):
     s = pygame.Surface((w, h), pygame.SRCALPHA)
-    # slightly varying alpha per line for organic feel
     y = 0
     while y < h:
-        a = alpha + (y % 9 == 0) * 8
-        pygame.draw.line(s, (140, 140, 140, a), (0, y), (w, y))
+        a = alpha + (y % 9 == 0) * 5
+        pygame.draw.line(s, (160, 160, 160, a), (0, y), (w, y))
         y += line_gap
     return s
 
-def build_vignette_surface(w, h, strength=150):
-    """Soft dark edges."""
+def build_vignette_surface(w, h, strength=70):
     v = pygame.Surface((w, h), pygame.SRCALPHA)
     cx, cy = w / 2, h / 2
     maxr = math.hypot(cx, cy)
-    # radial gradient approximation with circles
     for i in range(18):
         t = i / 17
         a = int(strength * (t ** 2))
@@ -109,19 +99,28 @@ def build_vignette_surface(w, h, strength=150):
         pygame.draw.circle(v, (0, 0, 0, a), (int(cx), int(cy)), r, width=0)
     return v
 
-SCANLINES = build_scanlines_surface(W, H, line_gap=3, alpha=26)
-VIGNETTE = build_vignette_surface(W, H, strength=145)
+SCANLINES = build_scanlines_surface(W, H, line_gap=3, alpha=14)
+VIGNETTE = build_vignette_surface(W, H, strength=70)
 
-# tiny “noise” sparkle (very light)
 NOISE = pygame.Surface((W, H), pygame.SRCALPHA)
 def refresh_noise(surf, density=2200):
     surf.fill((0, 0, 0, 0))
-    # random faint pixels
     xs = rng.integers(0, W, size=density)
     ys = rng.integers(0, H, size=density)
     for x, y in zip(xs, ys):
-        a = int(rng.integers(6, 18))
-        surf.set_at((int(x), int(y)), (210, 210, 210, a))
+        a = int(rng.integers(3, 10))
+        surf.set_at((int(x), int(y)), (220, 220, 220, a))
+
+BRIGHTNESS_BOOST = 12  # 0..30 recommended
+
+def draw_crt_vibe():
+    screen.blit(SCANLINES, (0, 0))
+    screen.blit(NOISE, (0, 0))
+    screen.blit(VIGNETTE, (0, 0))
+    if BRIGHTNESS_BOOST > 0:
+        overlay = pygame.Surface((W, H), pygame.SRCALPHA)
+        overlay.fill((BRIGHTNESS_BOOST, BRIGHTNESS_BOOST, BRIGHTNESS_BOOST, 0))
+        screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
 # ============================
 # Starfield (Menu background)
@@ -136,88 +135,26 @@ class Star:
         self.size = rng.uniform(0.8, 2.2)
 
     def step(self):
-        # move "towards" camera
         self.z -= self.speed * 0.01
         if self.z <= 0.08:
             self.__init__()
 
     def draw(self, surf):
-        # project to screen
         px = int(W/2 + (self.x / self.z) * (W * 0.18))
         py = int(H/2 + (self.y / self.z) * (H * 0.18))
         if 0 <= px < W and 0 <= py < H:
-            bright = int(120 + 135 * (1 - self.z))
+            bright = int(140 + 110 * (1 - self.z))
             rad = int(self.size * (1.2 + (1 - self.z)))
             pygame.draw.circle(surf, (bright, bright, bright), (px, py), max(1, rad))
 
-STAR_COUNT = 180
-stars = [Star() for _ in range(STAR_COUNT)]
+stars = [Star() for _ in range(180)]
 
-def draw_starfield():
-    # subtle gradient base
+def draw_starfield_base():
     screen.fill((10, 10, 16))
-    # draw stars
     for s in stars:
         s.step()
         s.draw(screen)
-    # slight vignette even on menu
     screen.blit(VIGNETTE, (0, 0))
-
-# ============================
-# App state
-# ============================
-STATE_MENU = "menu"
-STATE_SETTINGS = "settings"
-STATE_ABOUT = "about"
-STATE_PLAY = "play"
-state = STATE_MENU
-
-# ============================
-# Sim parameters
-# ============================
-params = {
-    "N_slits": 2,
-    "a": 0.35,
-    "d": 1.25,
-    "lam": 0.20,
-    "L": 12.0,
-    "shots_per_frame": 300,
-    "paused": False,
-    "reset_on_change": False,
-    "show_help": False,   # H toggles help overlay
-}
-
-# Accumulation arrays / surfaces
-counts = np.zeros(H, dtype=np.float64)
-hits_surf = pygame.Surface((W, H), pygame.SRCALPHA)
-
-ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, params["L"], params["lam"], params["a"], params["d"], params["N_slits"])
-last_dist_sig = None
-
-def dist_signature():
-    return (params["N_slits"], round(params["a"], 4), round(params["d"], 4), round(params["lam"], 4), round(params["L"], 4))
-
-def rebuild_distribution():
-    global ys_world, I_world, pdf, cdf, last_dist_sig
-    ys_world, I_world, pdf, cdf = build_sampler(
-        H, PX_TO_WORLD,
-        params["L"], params["lam"], params["a"], params["d"], params["N_slits"]
-    )
-    last_dist_sig = dist_signature()
-
-def reset_pattern():
-    counts[:] = 0
-    hits_surf.fill((0, 0, 0, 0))
-
-def add_hits(n_hits: int):
-    ys = sample_y(cdf, rng, n_hits)
-    np.add.at(counts, ys, 1.0)
-    for y in ys:
-        x = DETECTOR_X - rng.integers(0, 10)
-        pygame.draw.circle(hits_surf, (80, 180, 255, 35), (int(x), int(y)), 2)
-
-def clamp(v, lo, hi):
-    return max(lo, min(hi, v))
 
 # ============================
 # UI helpers
@@ -246,91 +183,285 @@ class Button:
             if self.rect.collidepoint(event.pos):
                 self.onclick()
 
-def draw_text(surf, text, x, y, font=FONT, color=TXT):
-    surf.blit(font.render(text, True, color), (x, y))
+def draw_text(text, x, y, font=FONT, color=TXT):
+    screen.blit(font.render(text, True, color), (x, y))
 
-def draw_multiline(surf, lines, x, y, font=FONT, color=TXT, line_h=22):
-    yy = y
-    for line in lines:
-        draw_text(surf, line, x, yy, font=font, color=color)
-        yy += line_h
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 # ============================
-# Quantum screen (clean + CRT vibe)
+# App state
 # ============================
-def draw_slits_diagram():
+STATE_MENU = "menu"
+STATE_PLAY = "play"   # quantum dots
+STATE_WAVE = "wave"   # classical wave field
+STATE_ABOUT = "about"
+state = STATE_MENU
+
+def set_state(new_state):
+    global state
+    state = new_state
+
+# ============================
+# Quantum Mode state
+# ============================
+q_defaults = {"N_slits": 2, "a": 0.35, "d": 1.25, "lam": 0.20, "L": 12.0, "shots_per_frame": 300}
+q = dict(q_defaults)
+q["paused"] = False
+q["show_help"] = False
+
+counts = np.zeros(H, dtype=np.float64)
+hits_surf = pygame.Surface((W, H), pygame.SRCALPHA)
+
+ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, q["L"], q["lam"], q["a"], q["d"], q["N_slits"])
+last_q_sig = None
+
+def q_signature():
+    return (q["N_slits"], round(q["a"], 4), round(q["d"], 4), round(q["lam"], 4), round(q["L"], 4))
+
+def q_rebuild():
+    global ys_world, I_world, pdf, cdf, last_q_sig
+    ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, q["L"], q["lam"], q["a"], q["d"], q["N_slits"])
+    last_q_sig = q_signature()
+
+def q_reset_pattern():
+    counts[:] = 0
+    hits_surf.fill((0, 0, 0, 0))
+
+def q_add_hits(n_hits: int):
+    ys = sample_y(cdf, rng, n_hits)
+    np.add.at(counts, ys, 1.0)
+    for y in ys:
+        x = DETECTOR_X - rng.integers(0, 10)
+        pygame.draw.circle(hits_surf, (80, 180, 255, 35), (int(x), int(y)), 2)
+
+def q_apply_keys(keys):
+    if keys[pygame.K_1]: q["N_slits"] = 1
+    if keys[pygame.K_2]: q["N_slits"] = 2
+    if keys[pygame.K_3]: q["N_slits"] = 3
+    if keys[pygame.K_4]: q["N_slits"] = 4
+    if keys[pygame.K_5]: q["N_slits"] = 5
+
+    if keys[pygame.K_LEFTBRACKET]:  q["a"] -= 0.01
+    if keys[pygame.K_RIGHTBRACKET]: q["a"] += 0.01
+    if keys[pygame.K_COMMA]:        q["d"] -= 0.02
+    if keys[pygame.K_PERIOD]:       q["d"] += 0.02
+
+    if keys[pygame.K_MINUS]:        q["lam"] -= 0.005
+    if keys[pygame.K_EQUALS]:       q["lam"] += 0.005
+
+    if keys[pygame.K_SEMICOLON]:    q["L"] -= 0.1
+    if keys[pygame.K_QUOTE]:        q["L"] += 0.1
+
+    if keys[pygame.K_DOWN]: q["shots_per_frame"] = max(10, q["shots_per_frame"] - 30)
+    if keys[pygame.K_UP]:   q["shots_per_frame"] = min(7000, q["shots_per_frame"] + 30)
+
+    q["a"]   = clamp(q["a"],   0.05, 1.50)
+    q["d"]   = clamp(q["d"],   0.10, 6.00)
+    q["lam"] = clamp(q["lam"], 0.02, 1.50)
+    q["L"]   = clamp(q["L"],   2.00, 60.0)
+
+# Quantum draw
+def q_draw_slits():
     barrier_x = CENTER_X - 40
     pygame.draw.rect(screen, RED, (barrier_x, 0, 20, H))
-
-    centers = (np.arange(params["N_slits"]) - (params["N_slits"] - 1) / 2) * params["d"]
+    centers = (np.arange(q["N_slits"]) - (q["N_slits"] - 1) / 2) * q["d"]
     for c in centers:
         y_center_px = int(H / 2 + c / PX_TO_WORLD)
-        half_w_px = int((params["a"] / 2) / PX_TO_WORLD)
-        pygame.draw.rect(screen, BG, (barrier_x, y_center_px - half_w_px, 20, 2 * half_w_px))
+        half_w_px = int((q["a"] / 2) / PX_TO_WORLD)
+        pygame.draw.rect(screen, PLAY_BG, (barrier_x, y_center_px - half_w_px, 20, 2 * half_w_px))
 
-def draw_detector_and_hist():
+def q_draw_detector_hist():
     pygame.draw.line(screen, TXT, (DETECTOR_X, 0), (DETECTOR_X, H), 2)
-
     maxc = counts.max()
-    if maxc <= 0:
-        maxc = 1.0
-
+    if maxc <= 0: maxc = 1.0
     plot_x0 = DETECTOR_X + 16
     plot_w = max(120, W - plot_x0 - 20)
-
     for y in range(H):
         v = counts[y] / maxc
         bar = int(v * plot_w)
         if bar > 0:
             screen.fill(ACCENT2, (plot_x0, y, bar, 1))
+    pygame.draw.rect(screen, (210, 210, 210), (plot_x0, 0, plot_w, H), 1)
 
-    pygame.draw.rect(screen, (200, 200, 200), (plot_x0, 0, plot_w, H), 1)
-
-def draw_minimal_hud():
-    hud_h = 74
+def q_draw_hud():
+    hud_h = 72
     hud = pygame.Surface((W, hud_h), pygame.SRCALPHA)
-    hud.fill((0, 0, 0, 120))
+    hud.fill((0, 0, 0, 105))
     screen.blit(hud, (0, 0))
+    status = "PAUSED" if q["paused"] else "RUNNING"
+    line1 = f"N={q['N_slits']}   a={q['a']:.2f}   d={q['d']:.2f}   λ={q['lam']:.3f}   L={q['L']:.1f}   shots/frame={q['shots_per_frame']}   {status}"
+    line2 = "H help   M menu   SPACE pause   R reset"
+    draw_text("Quantum Mode (Particles)", 18, 10, font=MID, color=TXT)
+    draw_text(line1, 18, 38, font=FONT, color=ACCENT)
+    draw_text(line2, 18, 56, font=FONT_S, color=MUTED)
 
-    status = "PAUSED" if params["paused"] else "RUNNING"
-    line1 = f"N={params['N_slits']}   a={params['a']:.2f}   d={params['d']:.2f}   λ={params['lam']:.3f}   L={params['L']:.1f}   shots/frame={params['shots_per_frame']}   {status}"
-    line2 = "Keys: H help   M menu   SPACE pause   R reset"
-
-    draw_text(screen, "Quantum Slits", 18, 10, font=MID, color=TXT)
-    draw_text(screen, line1, 18, 38, font=FONT, color=ACCENT)
-    draw_text(screen, line2, 18, 56, font=FONT_S, color=MUTED)
-
-def draw_help_overlay():
+def q_draw_help():
     pad = 18
     w = int(W * 0.52)
     h = int(H * 0.62)
     x = int(W * 0.24)
     y = int(H * 0.18)
+    panel = pygame.Surface((w, h), pygame.SRCALPHA)
+    panel.fill((20, 20, 26, 240))
+    pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
+
+    lines = [
+        "HELP (H toggles this)",
+        "",
+        "Quantum controls:",
+        "  1..5     number of slits N",
+        "  [ / ]    slit width a",
+        "  , / .    separation d",
+        "  - / =    wavelength λ",
+        "  ; / '    distance L",
+        "  ↑ / ↓    shots/frame",
+        "",
+        "General:",
+        "  SPACE    pause/run",
+        "  R        reset detector accumulation",
+        "  M        menu",
+        "  ESC      quit",
+    ]
+    yy = pad
+    for i, line in enumerate(lines):
+        f = MID if i == 0 else FONT
+        c = WARN if i == 0 else TXT
+        panel.blit(f.render(line, True, c), (pad, yy))
+        yy += 26 if i == 0 else 22
+
+    screen.blit(panel, (x, y))
+
+def draw_quantum_play():
+    screen.fill(PLAY_BG)
+    screen.blit(hits_surf, (0, 0))
+    q_draw_slits()
+    q_draw_detector_hist()
+    q_draw_hud()
+
+    pygame.draw.line(screen, (55, 55, 70), (LEFT_W, 0), (LEFT_W, H), 2)
+    pygame.draw.line(screen, (55, 55, 70), (DETECTOR_X, 0), (DETECTOR_X, H), 2)
+
+    draw_crt_vibe()
+    if q["show_help"]:
+        q_draw_help()
+
+# ============================
+# Wave Lab state (NEW)
+# ============================
+WF_W, WF_H = 420, 240
+wave_field_surf = pygame.Surface((WF_W, WF_H))
+wave_rgb = np.zeros((WF_W, WF_H, 3), dtype=np.uint8)
+
+XMAX, YMAX = 16.0, 6.0
+xf = np.linspace(0.0, XMAX, WF_W, dtype=np.float32)
+yf = np.linspace(-YMAX, YMAX, WF_H, dtype=np.float32)
+XF, YF = np.meshgrid(xf, yf, indexing="ij")
+
+wave_defaults = {"slit_sep": 2.0, "lam": 0.8, "phase": 0.0}
+wave = dict(wave_defaults)
+wave["show_amplitude"] = False  # False=intensity, True=amplitude
+wave["paused"] = False
+wave["show_help"] = False
+t_wave = 0.0
+
+def wave_reset():
+    global t_wave
+    for k, v in wave_defaults.items():
+        wave[k] = v
+    wave["show_amplitude"] = False
+    wave["paused"] = False
+    wave["show_help"] = False
+    t_wave = 0.0
+
+def wave_key_controls(keys):
+    if keys[pygame.K_MINUS]:  wave["lam"] -= 0.01
+    if keys[pygame.K_EQUALS]: wave["lam"] += 0.01
+    wave["lam"] = clamp(wave["lam"], 0.2, 2.5)
+
+    if keys[pygame.K_COMMA]:  wave["slit_sep"] -= 0.03
+    if keys[pygame.K_PERIOD]: wave["slit_sep"] += 0.03
+    wave["slit_sep"] = clamp(wave["slit_sep"], 0.5, 4.5)
+
+    if keys[pygame.K_LEFT]:  wave["phase"] -= 0.05
+    if keys[pygame.K_RIGHT]: wave["phase"] += 0.05
+
+def colorize_field(val, mode_intensity=True):
+    if mode_intensity:
+        v = val / (val.max() + 1e-9)
+        v = np.clip(v, 0, 1)
+        v = np.sqrt(v)
+        r = (30 + 170 * v).astype(np.uint8)
+        g = (40 + 200 * v).astype(np.uint8)
+        b = (60 + 220 * v).astype(np.uint8)
+        return r, g, b
+    else:
+        a = np.clip(val, -1, 1)
+        u = (a + 1) * 0.5
+        r = (30 + 220 * u).astype(np.uint8)
+        g = (30 + 120 * (1 - np.abs(a))).astype(np.uint8)
+        b = (30 + 220 * (1 - u)).astype(np.uint8)
+        return r, g, b
+
+def render_wave_field(dt_sec):
+    global t_wave
+    if not wave["paused"]:
+        t_wave += dt_sec
+
+    k = 2 * math.pi / max(wave["lam"], 1e-6)
+    omega = 2 * math.pi * 1.2  # visual animation speed
+
+    y1 = +wave["slit_sep"] / 2
+    y2 = -wave["slit_sep"] / 2
+
+    r1 = np.sqrt((XF - 0.0) ** 2 + (YF - y1) ** 2) + 1e-6
+    r2 = np.sqrt((XF - 0.0) ** 2 + (YF - y2) ** 2) + 1e-6
+
+    A1 = (1.0 / np.sqrt(r1)) * np.sin(k * r1 - omega * t_wave)
+    A2 = (1.0 / np.sqrt(r2)) * np.sin(k * r2 - omega * t_wave + wave["phase"])
+
+    A = A1 + A2
+
+    if wave["show_amplitude"]:
+        r, g, b = colorize_field(A, mode_intensity=False)
+    else:
+        I = A * A
+        r, g, b = colorize_field(I, mode_intensity=True)
+
+    wave_rgb[..., 0] = r
+    wave_rgb[..., 1] = g
+    wave_rgb[..., 2] = b
+
+    pygame.surfarray.blit_array(wave_field_surf, wave_rgb)
+
+def wave_help_overlay():
+    pad = 18
+    w = int(W * 0.52)
+    h = int(H * 0.60)
+    x = int(W * 0.24)
+    y = int(H * 0.20)
 
     panel = pygame.Surface((w, h), pygame.SRCALPHA)
     panel.fill((20, 20, 26, 240))
     pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
 
     lines = [
-        "HELP (toggle with H)",
+        "HELP (H toggles this)",
         "",
-        "Simulation controls:",
-        "  1..5        number of slits (N)",
-        "  [ / ]       slit width a",
-        "  , / .       slit separation d",
-        "  - / =       wavelength λ",
-        "  ; / '       screen distance L",
-        "  ↑ / ↓       shots per frame",
+        "Wave Lab controls:",
+        "  V        toggle view (Intensity ↔ Amplitude)",
+        "  , / .    slit separation",
+        "  - / =    wavelength",
+        "  ← / →    phase shift φ (moves fringes)",
         "",
         "General:",
-        "  SPACE       pause / run",
-        "  R           reset pattern",
-        "  M           back to menu",
-        "  ESC         quit",
+        "  SPACE    pause/run",
+        "  R        reset Wave Lab to defaults",
+        "  M        menu",
+        "  ESC      quit",
         "",
-        "Model:",
-        "  I(y) ∝ sinc²(π a y/(λ L)) × (sin(Nα)/sin α)²",
-        "  α = π d y/(λ L)   (Fraunhofer / far-field)"
+        "Math idea:",
+        "  A = A1 + A2    and    I ∝ A²",
     ]
 
     yy = pad
@@ -342,179 +473,138 @@ def draw_help_overlay():
 
     screen.blit(panel, (x, y))
 
-def draw_crt_vibe():
-    # scanlines + tiny noise + vignette on top
-    screen.blit(SCANLINES, (0, 0))
-    screen.blit(NOISE, (0, 0))
-    screen.blit(VIGNETTE, (0, 0))
+def draw_wave_lab(dt_sec):
+    screen.fill(PLAY_BG)
 
-def draw_play_screen():
-    # Slightly different base than menu so it feels “lab”
-    screen.fill((14, 14, 18))
+    box_x = int(W * 0.10)
+    box_y = int(H * 0.16)
+    box_w = int(W * 0.62)
+    box_h = int(H * 0.70)
 
-    # Content
-    screen.blit(hits_surf, (0, 0))
-    draw_slits_diagram()
-    draw_detector_and_hist()
-    draw_minimal_hud()
+    pygame.draw.rect(screen, (20, 20, 26), (box_x, box_y, box_w, box_h), border_radius=16)
+    pygame.draw.rect(screen, (90, 90, 110), (box_x, box_y, box_w, box_h), width=2, border_radius=16)
 
-    # separators (subtle)
-    pygame.draw.line(screen, (55, 55, 70), (LEFT_W, 0), (LEFT_W, H), 2)
-    pygame.draw.line(screen, (55, 55, 70), (DETECTOR_X, 0), (DETECTOR_X, H), 2)
+    render_wave_field(dt_sec)
+    scaled = pygame.transform.smoothscale(wave_field_surf, (box_w - 40, box_h - 40))
+    screen.blit(scaled, (box_x + 20, box_y + 20))
 
-    # CRT overlay (requested vibe)
+    # barrier + slits (visual)
+    bar_x = box_x + 20
+    bar_w = 10
+    pygame.draw.rect(screen, RED, (bar_x - bar_w, box_y + 20, bar_w, box_h - 40))
+
+    def y_to_px(y_world):
+        u = (y_world + YMAX) / (2 * YMAX)
+        return int((box_y + 20) + u * (box_h - 40))
+
+    slit_half = int((box_h - 40) * 0.045)
+    y1 = y_to_px(+wave["slit_sep"] / 2)
+    y2 = y_to_px(-wave["slit_sep"] / 2)
+    pygame.draw.rect(screen, PLAY_BG, (bar_x - bar_w, y1 - slit_half, bar_w, 2 * slit_half))
+    pygame.draw.rect(screen, PLAY_BG, (bar_x - bar_w, y2 - slit_half, bar_w, 2 * slit_half))
+
+    # HUD
+    hud_h = 92
+    hud = pygame.Surface((W, hud_h), pygame.SRCALPHA)
+    hud.fill((0, 0, 0, 105))
+    screen.blit(hud, (0, 0))
+
+    mode_txt = "AMPLITUDE" if wave["show_amplitude"] else "INTENSITY"
+    status = "PAUSED" if wave["paused"] else "RUNNING"
+    line1 = f"sep={wave['slit_sep']:.2f}   λ={wave['lam']:.2f}   phase φ={wave['phase']:.2f}   view={mode_txt}   {status}"
+    line2 = "H help   V view   M menu   SPACE pause   R reset"
+
+    draw_text("Wave Lab (Classical Interference)", 18, 10, font=MID, color=TXT)
+    draw_text(line1, 18, 42, font=FONT, color=ACCENT)
+    draw_text(line2, 18, 64, font=FONT_S, color=MUTED)
+
+    # right caption
+    cap_x = int(W * 0.76)
+    cap_y = int(H * 0.20)
+    lines = [
+        "Bright = constructive",
+        "Dark = destructive",
+        "",
+        "Try:",
+        "• V for amplitude view",
+        "• ← → to shift fringes",
+        "• - = to change λ",
+        "• , . to change spacing",
+    ]
+    for i, t in enumerate(lines):
+        draw_text(t, cap_x, cap_y + i * 20, font=FONT_S, color=TXT)
+
     draw_crt_vibe()
-
-    if params["show_help"]:
-        draw_help_overlay()
+    if wave["show_help"]:
+        wave_help_overlay()
 
 # ============================
-# Menu / Settings / About
+# Menu / About screens
 # ============================
-def set_state(new_state):
-    global state
-    state = new_state
-
-def toggle_reset_on_change():
-    params["reset_on_change"] = not params["reset_on_change"]
-
-def build_menus():
-    btn_w, btn_h = 340, 64
+def build_buttons():
+    btn_w, btn_h = 440, 66
     cx = W // 2 - btn_w // 2
-    top = int(H * 0.48)
+    top = int(H * 0.50)
     gap = 16
-
-    menu_buttons = [
-        Button((cx, top + 0*(btn_h+gap), btn_w, btn_h), "Play",     lambda: set_state(STATE_PLAY)),
-        Button((cx, top + 1*(btn_h+gap), btn_w, btn_h), "Settings", lambda: set_state(STATE_SETTINGS)),
-        Button((cx, top + 2*(btn_h+gap), btn_w, btn_h), "About",    lambda: set_state(STATE_ABOUT)),
-        Button((cx, top + 3*(btn_h+gap), btn_w, btn_h), "Quit",     lambda: pygame.event.post(pygame.event.Event(pygame.QUIT))),
+    menu = [
+        Button((cx, top + 0*(btn_h+gap), btn_w, btn_h), "Quantum Mode (Particles)", lambda: set_state(STATE_PLAY)),
+        Button((cx, top + 1*(btn_h+gap), btn_w, btn_h), "Light Mode (Waves)", lambda: set_state(STATE_WAVE)),
+        Button((cx, top + 2*(btn_h+gap), btn_w, btn_h), "About", lambda: set_state(STATE_ABOUT)),
+        Button((cx, top + 3*(btn_h+gap), btn_w, btn_h), "Quit", lambda: pygame.event.post(pygame.event.Event(pygame.QUIT))),
     ]
+    about = [Button((60, H-84, 200, 58), "Back", lambda: set_state(STATE_MENU))]
+    return menu, about
 
-    settings_buttons = [
-        Button((60, H-80, 200, 56), "Back", lambda: set_state(STATE_MENU)),
-        Button((280, H-80, 260, 56), "Reset Pattern", reset_pattern),
-        Button((560, H-80, 320, 56), "Toggle Reset-on-Change", toggle_reset_on_change),
-    ]
-
-    about_buttons = [
-        Button((60, H-80, 200, 56), "Back", lambda: set_state(STATE_MENU)),
-        Button((280, H-80, 260, 56), "Reset Pattern", reset_pattern),
-    ]
-    return menu_buttons, settings_buttons, about_buttons
-
-STATE_MENU = "menu"
-STATE_SETTINGS = "settings"
-STATE_ABOUT = "about"
-STATE_PLAY = "play"
-menu_buttons, settings_buttons, about_buttons = build_menus()
+menu_buttons, about_buttons = build_buttons()
 
 def draw_menu():
-    # Starry animated background (requested)
-    draw_starfield()
-
-    # subtle scanlines even on menu (lighter)
+    draw_starfield_base()
     screen.blit(SCANLINES, (0, 0))
 
-    # title + glow-ish underline
-    title_y = int(H * 0.18)
     title = "Quantum Slits"
-    sub = "Build interference patterns shot-by-shot."
-    hint = "Click Play • In-game: H = help, M = menu"
+    sub = "Two ways to see interference: particles and waves."
+    hint = "Pick a mode • In-game: M = menu"
 
+    title_y = int(H * 0.18)
     tx = W//2 - BIG.size(title)[0]//2
-    # soft glow by drawing 2 offsets
-    draw_text(screen, title, tx+2, title_y+2, font=BIG, color=(20, 60, 90))
-    draw_text(screen, title, tx,   title_y,   font=BIG, color=ACCENT)
 
-    draw_text(screen, sub,  W//2 - MID.size(sub)[0]//2,  title_y + 64, font=MID,  color=TXT)
-    draw_text(screen, hint, W//2 - FONT.size(hint)[0]//2, title_y + 98, font=FONT, color=MUTED)
+    draw_text(title, tx+3, title_y+3, font=BIG, color=(10, 40, 70))
+    draw_text(title, tx,   title_y,   font=BIG, color=ACCENT)
 
-    # accent line
-    pygame.draw.line(screen, ACCENT, (W//2 - 220, title_y + 118), (W//2 + 220, title_y + 118), 2)
+    draw_text(sub,  W//2 - MID.size(sub)[0]//2,   title_y + 64, font=MID,  color=TXT)
+    draw_text(hint, W//2 - FONT.size(hint)[0]//2, title_y + 96, font=FONT, color=MUTED)
+    pygame.draw.line(screen, ACCENT, (W//2 - 280, title_y + 118), (W//2 + 280, title_y + 118), 2)
 
     for b in menu_buttons:
-        b.draw(screen)
-
-    # gentle vignette
-    screen.blit(VIGNETTE, (0, 0))
-
-def draw_settings():
-    draw_starfield()
-    pygame.draw.rect(screen, PANEL, (60, 120, W-120, H-220), border_radius=18)
-    pygame.draw.rect(screen, (90, 90, 110), (60, 120, W-120, H-220), width=2, border_radius=18)
-    draw_text(screen, "Settings", 60, 50, font=BIG, color=ACCENT)
-
-    lines = [
-        "Adjust values in-game (fast):",
-        "  1..5 slits | [ ] width | , . separation | - = wavelength | ; ' distance | ↑↓ shots",
-        "",
-        f"Current:  N={params['N_slits']}   a={params['a']:.2f}   d={params['d']:.2f}   λ={params['lam']:.3f}   L={params['L']:.1f}",
-        f"Shots/frame: {params['shots_per_frame']}",
-        f"Reset-on-change: {'ON' if params['reset_on_change'] else 'OFF'}",
-        "",
-        "Tip: More slits -> sharper peaks. Bigger λ -> wider fringes."
-    ]
-    draw_multiline(screen, lines, 90, 160, font=FONT, color=TXT, line_h=26)
-
-    for b in settings_buttons:
         b.draw(screen)
 
     screen.blit(VIGNETTE, (0, 0))
 
 def draw_about():
-    draw_starfield()
+    draw_starfield_base()
     pygame.draw.rect(screen, PANEL, (60, 120, W-120, H-220), border_radius=18)
     pygame.draw.rect(screen, (90, 90, 110), (60, 120, W-120, H-220), width=2, border_radius=18)
-    draw_text(screen, "About", 60, 50, font=BIG, color=ACCENT)
+    draw_text("About", 60, 50, font=BIG, color=ACCENT)
 
     lines = [
-        "Real-time multi-slit interference (Fraunhofer / far-field).",
+        "Quantum Mode:",
+        "• Dots accumulate into an N-slit interference pattern.",
         "",
-        "Each dot is a detection event sampled from:",
-        "  I(y) ∝ sinc²(π a y/(λ L)) × (sin(Nα)/sin α)²,  α = π d y/(λ L)",
+        "Wave Lab:",
+        "• Two coherent waves emerge from the slit openings.",
+        "• Amplitudes add, intensity is I ∝ A².",
         "",
-        "Idea upgrades:",
-        "  • overlay theoretical curve on histogram",
-        "  • add decoherence slider (blend toward single-slit envelope)",
-        "  • export screenshot / GIF",
+        "Universal:",
+        "• H help (in-mode), M menu, ESC quit",
     ]
-    draw_multiline(screen, lines, 90, 160, font=FONT, color=TXT, line_h=26)
+    y0 = 160
+    for i, t in enumerate(lines):
+        draw_text(t, 90, y0 + i * 26, font=FONT, color=TXT)
 
     for b in about_buttons:
         b.draw(screen)
 
     screen.blit(VIGNETTE, (0, 0))
-
-# ============================
-# In-game key controls
-# ============================
-def apply_play_keys(keys):
-    if keys[pygame.K_1]: params["N_slits"] = 1
-    if keys[pygame.K_2]: params["N_slits"] = 2
-    if keys[pygame.K_3]: params["N_slits"] = 3
-    if keys[pygame.K_4]: params["N_slits"] = 4
-    if keys[pygame.K_5]: params["N_slits"] = 5
-
-    if keys[pygame.K_LEFTBRACKET]:  params["a"] -= 0.01
-    if keys[pygame.K_RIGHTBRACKET]: params["a"] += 0.01
-
-    if keys[pygame.K_COMMA]:  params["d"] -= 0.02
-    if keys[pygame.K_PERIOD]: params["d"] += 0.02
-
-    if keys[pygame.K_MINUS]:  params["lam"] -= 0.005
-    if keys[pygame.K_EQUALS]: params["lam"] += 0.005
-
-    if keys[pygame.K_SEMICOLON]: params["L"] -= 0.1
-    if keys[pygame.K_QUOTE]:     params["L"] += 0.1
-
-    if keys[pygame.K_DOWN]: params["shots_per_frame"] = max(10, params["shots_per_frame"] - 30)
-    if keys[pygame.K_UP]:   params["shots_per_frame"] = min(7000, params["shots_per_frame"] + 30)
-
-    params["a"]   = clamp(params["a"],   0.05, 1.50)
-    params["d"]   = clamp(params["d"],   0.10, 6.00)
-    params["lam"] = clamp(params["lam"], 0.02, 1.50)
-    params["L"]   = clamp(params["L"],   2.00, 60.0)
 
 # ============================
 # Main loop
@@ -523,12 +613,11 @@ running = True
 noise_timer = 0.0
 
 while running:
-    dt = clock.tick(60) / 1000.0
+    dt_sec = clock.tick(60) / 1000.0
 
-    # refresh tiny noise ~8 fps (cheap)
-    noise_timer += dt
+    noise_timer += dt_sec
     if noise_timer > 0.12:
-        refresh_noise(NOISE, density=int((W * H) / 420))  # scales with resolution
+        refresh_noise(NOISE, density=int((W * H) / 420))
         noise_timer = 0.0
 
     for event in pygame.event.get():
@@ -538,9 +627,6 @@ while running:
         if state == STATE_MENU:
             for b in menu_buttons:
                 b.handle(event)
-        elif state == STATE_SETTINGS:
-            for b in settings_buttons:
-                b.handle(event)
         elif state == STATE_ABOUT:
             for b in about_buttons:
                 b.handle(event)
@@ -549,40 +635,49 @@ while running:
             if event.key == pygame.K_ESCAPE:
                 running = False
 
+            # universal menu
+            if event.key == pygame.K_m:
+                set_state(STATE_MENU)
+
             if state == STATE_PLAY:
                 if event.key == pygame.K_SPACE:
-                    params["paused"] = not params["paused"]
+                    q["paused"] = not q["paused"]
                 if event.key == pygame.K_r:
-                    reset_pattern()
+                    q_reset_pattern()
                 if event.key == pygame.K_h:
-                    params["show_help"] = not params["show_help"]
-                if event.key == pygame.K_m:
-                    set_state(STATE_MENU)
-            else:
-                if event.key == pygame.K_m:
-                    set_state(STATE_MENU)
+                    q["show_help"] = not q["show_help"]
 
-    # ---- State update/draw ----
+            if state == STATE_WAVE:
+                if event.key == pygame.K_SPACE:
+                    wave["paused"] = not wave["paused"]
+                if event.key == pygame.K_r:
+                    wave_reset()
+                if event.key == pygame.K_h:
+                    wave["show_help"] = not wave["show_help"]
+                if event.key == pygame.K_v:
+                    wave["show_amplitude"] = not wave["show_amplitude"]
+
+    # ---- Update + Draw ----
     if state == STATE_PLAY:
         keys = pygame.key.get_pressed()
-        apply_play_keys(keys)
+        q_apply_keys(keys)
 
-        sig = dist_signature()
-        if sig != last_dist_sig:
-            rebuild_distribution()
-            if params["reset_on_change"]:
-                reset_pattern()
+        sig = q_signature()
+        if sig != last_q_sig:
+            q_rebuild()
 
-        if not params["paused"]:
-            add_hits(params["shots_per_frame"])
+        if not q["paused"]:
+            q_add_hits(q["shots_per_frame"])
 
-        draw_play_screen()
+        draw_quantum_play()
+
+    elif state == STATE_WAVE:
+        keys = pygame.key.get_pressed()
+        wave_key_controls(keys)
+        draw_wave_lab(dt_sec)
 
     elif state == STATE_MENU:
         draw_menu()
-
-    elif state == STATE_SETTINGS:
-        draw_settings()
 
     elif state == STATE_ABOUT:
         draw_about()
