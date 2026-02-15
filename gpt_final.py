@@ -101,8 +101,10 @@ def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
 pygame.init()
 pygame.display.set_caption("Superposition X")
 
-screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-W, H = screen.get_size()
+# Windowed mode (not fullscreen)
+W, H = 1400, 800   # you can change this to whatever size you want
+screen = pygame.display.set_mode((W, H))
+clock = pygame.time.Clock()
 clock = pygame.time.Clock()
 
 FONT   = pygame.font.SysFont("consolas", 18)
@@ -128,6 +130,8 @@ CENTER_X = LEFT_W
 DETECTOR_X = int(W * 0.82)
 PX_TO_WORLD = 0.02 #Chosen arbitrarily; made nice fringes, reasonable spacing, and the interference pattern visible
 
+
+#AESTHETICS SIDE 
 def build_scanlines_surface(w, h, line_gap=3, alpha=14):
     '''
     Purely aesthetic. This creates the "retro lab" theme we were looking for.
@@ -147,10 +151,10 @@ def build_vignette_surface(w, h, strength=55):
     '''
     v = pygame.Surface((w, h), pygame.SRCALPHA) # New surface, transparency supportive
     cx, cy = w / 2, h / 2 #Finds the center of the screen
-    maxr = math.hypot(cx, cy)
-    for i in range(16):
-        t = i / 15
-        a = int(strength * (t ** 2))
+    maxr = math.hypot(cx, cy) #Finds the Max radius of the screen using pythagorem 
+    for i in range(16): #We're drawing '16' circles on top of each other, to make a gradient
+        t = i / 15 #normalizing the t values (from 0 to 1)
+        a = int(strength * (t ** 2)) #strength of darkness increases quadratically
         r = int(maxr * (0.60 + 0.50 * t))
         pygame.draw.circle(v, (0, 0, 0, a), (int(cx), int(cy)), r, width=0)
     return v
@@ -160,6 +164,9 @@ VIGNETTE  = build_vignette_surface(W, H, strength=55)
 
 NOISE = pygame.Surface((W, H), pygame.SRCALPHA)
 def refresh_noise(surf, density=2200):
+    '''
+    aesthetic. Creates random pixels to simulate "subtle flickering"
+    '''
     surf.fill((0, 0, 0, 0))
     xs = rng.integers(0, W, size=density)
     ys = rng.integers(0, H, size=density)
@@ -170,6 +177,13 @@ def refresh_noise(surf, density=2200):
 BRIGHTNESS_BOOST = 10
 
 def draw_crt_vibe():
+    '''
+    This function 
+    1- Adds the lines 
+    2- Adds the static
+    3- Darkens the edges 
+    4- Adds light to all pixels (boosting brightness)
+    '''
     screen.blit(SCANLINES, (0, 0))
     screen.blit(NOISE, (0, 0))
     screen.blit(VIGNETTE, (0, 0))
@@ -178,10 +192,12 @@ def draw_crt_vibe():
         overlay.fill((BRIGHTNESS_BOOST, BRIGHTNESS_BOOST, BRIGHTNESS_BOOST, 0))
         screen.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
-# =========================================================
+
 # UI helpers
-# =========================================================
 class Button:
+    '''
+    Creating a button class that stores all the things we need to call for later.
+    '''
     def __init__(self, rect, text, onclick, *,
                  bg=(40, 40, 50), hover=(55, 55, 70), fg=TXT, font=MID):
         self.rect = pygame.Rect(rect)
@@ -193,14 +209,18 @@ class Button:
         self.font = font
 
     def draw(self, surf):
+        '''
+        If mouse is hovering: Change colour
+        '''
         mx, my = pygame.mouse.get_pos()
         is_hover = self.rect.collidepoint(mx, my)
         pygame.draw.rect(surf, self.hover if is_hover else self.bg, self.rect, border_radius=12)
         pygame.draw.rect(surf, (95, 95, 120), self.rect, width=2, border_radius=12)
-        t = self.font.render(self.text, True, self.fg)
-        surf.blit(t, t.get_rect(center=self.rect.center))
+        t = self.font.render(self.text, True, self.fg) #For smoother text
+        surf.blit(t, t.get_rect(center=self.rect.center)) #drawing the text inside the button
 
     def handle(self, event):
+        #Checks when clicked then runs onclick (if click is inside the button)
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
                 self.onclick()
@@ -209,9 +229,16 @@ def draw_text(text, x, y, font=FONT, color=TXT):
     screen.blit(font.render(text, True, color), (x, y))
 
 def clamp(v, lo, hi):
+    '''
+    Function that forces v to stay between 'lo' and 'hi'
+    '''
     return max(lo, min(hi, v))
 
 def wrap_text(text, font, max_w):
+    '''
+    This function basically writes lines for us. If we want to write multiple words,
+    but the words 'spill' over the line, it automatically creates a new line.
+    '''
     words = text.split()
     lines = []
     cur = ""
@@ -228,6 +255,9 @@ def wrap_text(text, font, max_w):
     return lines
 
 def clamp_rect(rect, bounds):
+    '''
+    Just a safety net so that any rectangle doesn't leave its defined boundary
+    '''
     if rect.left < bounds.left:
         rect.left = bounds.left
     if rect.right > bounds.right:
@@ -238,9 +268,8 @@ def clamp_rect(rect, bounds):
         rect.bottom = bounds.bottom
     return rect
 
-# =========================================================
+
 # States
-# =========================================================
 STATE_MENU    = "menu"
 STATE_PLAY    = "play"
 STATE_WAVE    = "wave"
@@ -249,11 +278,9 @@ state = STATE_MENU
 
 def set_state(s):
     global state
-    state = s
+    state = s #this is how we change states. 
 
-# =========================================================
 # QUANTUM MODE (Particles)
-# =========================================================
 q_defaults = {
     "N_slits": 2,
     "a": 0.35,
@@ -262,7 +289,7 @@ q_defaults = {
     "L": 12.0,
     "shots_per_frame": 300,
 }
-q = dict(q_defaults)
+q = dict(q_defaults) #creating another dict to keep the defaults apart
 q["paused"] = False
 q["show_help"] = False
 
@@ -270,28 +297,40 @@ counts = np.zeros(H, dtype=np.float64)
 hits_surf = pygame.Surface((W, H), pygame.SRCALPHA)
 
 ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, q["L"], q["lam"], q["a"], q["d"], q["N_slits"])
+# ^ calls on one of the first functions we defined with the current q variables
 last_q_sig = None
 
 def q_signature():
-    return (q["N_slits"], round(q["a"], 4), round(q["d"], 4), round(q["lam"], 4), round(q["L"], 4))
+    return (q["N_slits"], round(q["a"], 4), round(q["d"], 4), round(q["lam"], 4), round(q["L"], 4)) #this is basically to save the last parameters, rounded to 4 sig figs
 
 def q_rebuild():
+    '''
+    Basically, just a recalculation of the interference pattern using the new settings.
+    The new values obtained are stored as a last signature. 
+    '''
     global ys_world, I_world, pdf, cdf, last_q_sig
     ys_world, I_world, pdf, cdf = build_sampler(H, PX_TO_WORLD, q["L"], q["lam"], q["a"], q["d"], q["N_slits"])
     last_q_sig = q_signature()
 
 def q_reset_pattern():
+    #Resetting everything
     counts[:] = 0
     hits_surf.fill((0, 0, 0, 0))
 
 def q_add_hits(n_hits: int):
-    ys = sample_y(cdf, rng, n_hits)
-    np.add.at(counts, ys, 1.0)
+    '''
+    This is what ACTUALLY adds the particles to the screen.
+    
+    '''
+    ys = sample_y(cdf, rng, n_hits) #The array obtained by random sampling
+    np.add.at(counts, ys, 1.0) #Adds 1 count for each hit 
     for y in ys:
-        x = DETECTOR_X - int(rng.integers(0, 10))
-        pygame.draw.circle(hits_surf, (80, 180, 255, 35), (int(x), int(y)), 2)
+        x = DETECTOR_X - int(rng.integers(0, 10)) #Slightly randomizes the horizontal positions to make the detector seem more realistic.
+        #This was deliberate, because if we didnt add the slight offset, particles would be able to stack on exactly the same verticle line if they belonged to the same cdf.
+        pygame.draw.circle(hits_surf, (80, 180, 255, 35), (int(x), int(y)), 2) #Aesthetic but barely noticable
 
 def q_apply_keys(keys):
+    #Just to modify the game stats based on keys clicked for particles
     if keys[pygame.K_1]: q["N_slits"] = 1
     if keys[pygame.K_2]: q["N_slits"] = 2
     if keys[pygame.K_3]: q["N_slits"] = 3
@@ -319,33 +358,37 @@ def q_apply_keys(keys):
     q["L"]   = clamp(q["L"],   2.00, 60.0)
 
 def q_draw_slits():
+    #Builds the red barrier
     barrier_x = CENTER_X - 40
-    pygame.draw.rect(screen, RED, (barrier_x, 0, 20, H))
-    centers = (np.arange(q["N_slits"]) - (q["N_slits"] - 1)/2) * q["d"]
+    pygame.draw.rect(screen, RED, (barrier_x, 0, 20, H)) #20 wide, whole screen tall
+    centers = (np.arange(q["N_slits"]) - (q["N_slits"] - 1)/2) * q["d"] #drawing the slits based on N_slits and the center in REAL WORLD UNITS
+    #the variable 'centers' contains the verticle position of each slit 
     for c in centers:
-        y_center_px = int(H/2 + c / PX_TO_WORLD)
+        y_center_px = int(H/2 + c / PX_TO_WORLD) #transform into pixel size units
         half_w_px = int((q["a"]/2) / PX_TO_WORLD)
         pygame.draw.rect(screen, PLAY_BG, (barrier_x, y_center_px - half_w_px, 20, 2*half_w_px))
 
 def q_draw_detector():
     pygame.draw.aaline(screen, (200, 200, 200), (DETECTOR_X, 0), (DETECTOR_X, H))
 
-    maxc = counts.max()
+    maxc = counts.max() #largest number of hits at ANY pixel row
+    #remember: counts is an array of 0 for every pixel of height
     if maxc <= 0:
-        maxc = 1.0
+        maxc = 1.0 #avoid dbz if NO particles have hit
 
     plot_x0 = DETECTOR_X + 16
     plot_w = max(120, W - plot_x0 - 20)
 
     for y in range(H):
-        v = counts[y] / maxc
-        bar = int(v * plot_w)
-        if bar > 0:
-            screen.fill(ACCENT2, (plot_x0, y, bar, 1))
+        v = counts[y] / maxc #normalize intensity between 0-1 (bc largest n of hits=1 intensity)
+        bar = int(v * plot_w) #scale to graph width (if i=0.5, will take 0.5(full bar width)
+        if bar > 0: #if intensity != 0 
+            screen.fill(ACCENT2, (plot_x0, y, bar, 1)) #draw the one pixel horizontal line
 
     pygame.draw.rect(screen, (210, 210, 210), (plot_x0, 0, plot_w, H), 1)
 
 def q_draw_hud():
+    #just drawing the HUD values on top of the screen
     hud = pygame.Surface((W, 72), pygame.SRCALPHA)
     hud.fill((0, 0, 0, 105))
     screen.blit(hud, (0, 0))
@@ -357,6 +400,7 @@ def q_draw_hud():
     draw_text(line2, 18, 56, font=FONT_S, color=MUTED)
 
 def q_draw_help():
+    #this is the help tab when u click h
     pad = 18
     w = int(W * 0.52)
     h = int(H * 0.62)
@@ -366,7 +410,7 @@ def q_draw_help():
     panel.fill((20, 20, 26, 240))
     pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
     lines = [
-        "HELP (H toggles this)",
+        "HELP MENU",
         "",
         "Quantum controls:",
         "  1..5     number of slits N",
@@ -383,14 +427,25 @@ def q_draw_help():
         "  ESC      quit",
     ]
     yy = pad
-    for i, line in enumerate(lines):
-        f = MID if i == 0 else FONT
-        c = WARN if i == 0 else TXT
+    for i, line in enumerate(lines): #looping thru each line
+        f = MID if i == 0 else FONT #if its first line, then big text
+        c = WARN if i == 0 else TXT #if its first line, use highlight colour
         panel.blit(f.render(line, True, c), (pad, yy))
-        yy += 26 if i == 0 else 22
+        yy += 26 if i == 0 else 22 #moving down lines, title gets extra spacing (26)
     screen.blit(panel, (x, y))
 
 def draw_quantum():
+    '''
+    Takes care of:
+    -Background
+    -Particle Hits
+    -Slits
+    -Detector Graph
+    -UI
+    -Visual effects
+    -Help overlay
+    Each frame, this is called to build the full scene
+    '''
     screen.fill(PLAY_BG)
     screen.blit(hits_surf, (0, 0))
     q_draw_slits()
@@ -402,9 +457,8 @@ def draw_quantum():
     if q["show_help"]:
         q_draw_help()
 
-# =========================================================
 # LIGHT MODE (Waves)
-# =========================================================
+#Initial settings
 WF_W, WF_H = 420, 240
 wave_field_surf = pygame.Surface((WF_W, WF_H))
 wave_rgb = np.zeros((WF_W, WF_H, 3), dtype=np.uint8)
@@ -422,9 +476,10 @@ wave["show_help"] = False
 t_wave = 0.0
 
 def wave_reset():
-    global t_wave
+    #resetting wave back to default
+    global t_wave #global: affects out of function
     for k_, v_ in wave_defaults.items():
-        wave[k_] = v_
+        wave[k_] = v_ #resetting our current wave based on our wave_default
     wave["show_amplitude"] = False
     wave["paused"] = False
     wave["show_help"] = False
@@ -443,20 +498,28 @@ def wave_key_controls(keys):
     if keys[pygame.K_RIGHT]: wave["phase"] += 0.05
 
 def colorize_field(val, intensity=True):
+    '''
+    val: NumPy array of many values, each number representing probability density at a point 
+    Converting to rgb, where the ladder increases the most rapidly, while the former increases the least rapidly. 
+    Bright areas -> Light blue, almost white
+    Dark areas -> Stay dark bluish
+    '''
     if intensity:
-        v = val / (val.max() + 1e-9)
+        v = val / (val.max() + 1e-9) #normalizing the data 0-1. Preventing d.b.z
         v = np.clip(v, 0, 1)
-        v = np.sqrt(v)
-        r = (30 + 170 * v).astype(np.uint8)
+        v = np.sqrt(v) #brightens dim values. Aesthetically nicer.
+        r = (30 + 170 * v).astype(np.uint8) #So that pygame  colours can read them
         g = (40 + 200 * v).astype(np.uint8)
         b = (60 + 220 * v).astype(np.uint8)
         return r, g, b
     else:
-        a = np.clip(val, -1, 1)
-        u = (a + 1) * 0.5
+        a = np.clip(val, -1, 1) #Forces values between -1 and 1
+        u = (a + 1) * 0.5 #transforms values into 0 to 1 
         r = (30 + 220 * u).astype(np.uint8)
         g = (30 + 120 * (1 - np.abs(a))).astype(np.uint8)
         b = (30 + 220 * (1 - u)).astype(np.uint8)
+        #Higher amplitude -> More red. Negative amplitude -> More blue 
+        #Near Zero amplitude -> Gray 
         return r, g, b
 
 def render_wave_field(dt_sec):
@@ -464,25 +527,32 @@ def render_wave_field(dt_sec):
     if not wave["paused"]:
         t_wave += dt_sec
 
-    k = 2 * math.pi / max(wave["lam"], 1e-6)
-    omega = 2 * math.pi * 1.2
+    k = 2 * math.pi / max(wave["lam"], 1e-6) #formula k = 2pi/lambda
+    omega = 2 * math.pi * 1.2 #for simplicity, the angular frequency is fixed at this value
 
     y1 = +wave["slit_sep"] / 2
     y2 = -wave["slit_sep"] / 2
-
+    #two different light sources
     r1 = np.sqrt((XF - 0.0)**2 + (YF - y1)**2) + 1e-6
     r2 = np.sqrt((XF - 0.0)**2 + (YF - y2)**2) + 1e-6
+    # ^ distance from each pixel to the source 
 
+    #The formula for a CIRCULAR TRAVELLING WAVE from a point source is: 
+    # A(r,t) = (1/sqrt(r)) * sin(kr - wt)
+    # As radius increases, the amplitude decreases (energy spreads over larger circumference)
     A1 = (1.0 / np.sqrt(r1)) * np.sin(k * r1 - omega * t_wave)
     A2 = (1.0 / np.sqrt(r2)) * np.sin(k * r2 - omega * t_wave + wave["phase"])
-    A = A1 + A2
+    #We can phase shift the SECOND light source. Try a phaseshift of 3.15, see what it does. 
+    #Theoretically, at 180 degrees, they should be complete opposites.
+    A = A1 + A2 #Interference happens automatically!!
 
     if wave["show_amplitude"]:
-        r, g, b = colorize_field(A, intensity=False)
+        r, g, b = colorize_field(A, intensity=False) #Using A directly -> negative waves
     else:
-        I = A * A
-        r, g, b = colorize_field(I, intensity=True)
+        I = A * A #I = A^2
+        r, g, b = colorize_field(I, intensity=True) #Using A^2 -> positive values always
 
+    # giving ALL pixels (...) red, green, and blue values
     wave_rgb[..., 0] = r
     wave_rgb[..., 1] = g
     wave_rgb[..., 2] = b
@@ -498,7 +568,7 @@ def wave_help_overlay():
     panel.fill((20, 20, 26, 240))
     pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
     lines = [
-        "HELP (H toggles this)",
+        "HELP MENU",
         "",
         "Light Mode controls:",
         "  V        toggle view (Intensity ↔ Amplitude)",
@@ -526,6 +596,7 @@ def wave_help_overlay():
 def draw_wave(dt_sec):
     screen.fill(PLAY_BG)
 
+    #viewbox
     box_x = int(W * 0.10)
     box_y = int(H * 0.16)
     box_w = int(W * 0.62)
@@ -534,21 +605,22 @@ def draw_wave(dt_sec):
     pygame.draw.rect(screen, (20, 20, 26), (box_x, box_y, box_w, box_h), border_radius=16)
     pygame.draw.rect(screen, (90, 90, 110), (box_x, box_y, box_w, box_h), width=2, border_radius=16)
 
-    render_wave_field(dt_sec)
+    render_wave_field(dt_sec) #Computing the wave field with previous function
     scaled = pygame.transform.smoothscale(wave_field_surf, (box_w - 40, box_h - 40))
-    screen.blit(scaled, (box_x + 20, box_y + 20))
+    screen.blit(scaled, (box_x + 20, box_y + 20)) #Drawing the wave field SCALED TO FIT THE BOX
 
+    #red bar on tablet
     bar_x = box_x + 20
     bar_w = 10
     pygame.draw.rect(screen, RED, (bar_x - bar_w, box_y + 20, bar_w, box_h - 40))
 
-    def y_to_px(y_world):
-        u = (y_world + YMAX) / (2 * YMAX)
+    def y_to_px(y_world): #converting world values to pixel values
+        u = (y_world + YMAX) / (2 * YMAX) # [0,1]
         return int((box_y + 20) + u * (box_h - 40))
 
     slit_half = int((box_h - 40) * 0.045)
-    y1 = y_to_px(+wave["slit_sep"] / 2)
-    y2 = y_to_px(-wave["slit_sep"] / 2)
+    y1 = y_to_px(+wave["slit_sep"] / 2) #positioning first source
+    y2 = y_to_px(-wave["slit_sep"] / 2) #second 
     pygame.draw.rect(screen, PLAY_BG, (bar_x - bar_w, y1 - slit_half, bar_w, 2 * slit_half))
     pygame.draw.rect(screen, PLAY_BG, (bar_x - bar_w, y2 - slit_half, bar_w, 2 * slit_half))
 
@@ -565,7 +637,7 @@ def draw_wave(dt_sec):
     draw_text(line1, 18, 42, font=FONT, color=ACCENT)
     draw_text(line2, 18, 64, font=FONT_S, color=MUTED)
 
-    # right caption / instructions (restored)
+    # right caption / quick help menu 
     cap_x = int(W * 0.76)
     cap_y = int(H * 0.20)
     tips = [
@@ -589,42 +661,40 @@ def draw_wave(dt_sec):
     if wave["show_help"]:
         wave_help_overlay()
 
-# =========================================================
-# Exhibition X (shifted UP + hover text appears under name/title)
-# =========================================================
+# Exhibition X 
 exhibit = {"show_help": False}
 
 EXHIBIT_EVENTS = [
     (1801, "Thomas Young", "Double-slit interference",
      "Young showed that light through two slits forms bright/dark bands. This is the first clean demonstration of interference—waves can add and cancel.",
-     "Light Mode: fringe pattern origin."),
+     "Thomas Young's contribution"),
     (1865, "J.C. Maxwell", "Light is an EM wave",
      "Maxwell proved light is an electromagnetic wave. That gives a physical model for wave crests/troughs that can interfere.",
-     "Light Mode: waves are real fields."),
+     "J.C. Maxwell's contribution"),
     (1900, "Max Planck", "Energy comes in quanta",
      "Planck introduced quantization: energy exchanges happen in discrete packets. This breaks classical continuity and starts modern quantum theory.",
-     "Quantum Mode: discreteness begins."),
+     "QMax Planck's contribution"),
     (1905, "Albert Einstein", "Photons (particle light)",
      "Einstein explained the photoelectric effect by treating light as photons. Light sometimes behaves like individual hits, not a smooth wave.",
-     "Quantum Mode: particle detection idea."),
+     "Albert Einstein's contribution"),
     (1924, "Louis de Broglie", "Matter has wavelength",
      "De Broglie proposed matter waves: particles have λ = h/p. So electrons should diffract and interfere like light does.",
-     "Bridge: why particles form fringes."),
+     "Louis de Broglie's contribution"),
+    (1926, "E. Schrödinger", "Wavefunction dynamics",
+    "Schrödinger’s equation evolves ψ over time. The predicted screen pattern comes from |ψ|² (probability density).",
+    "Schrödinger's contribution"),
     (1927, "Davisson–Germer", "Electron diffraction proven",
      "They observed interference peaks from electrons scattered off crystals. This confirmed that particles truly behave like waves.",
-     "Quantum Mode: validates your pattern."),
+     "Davisson–Germer's contribution"),
     (1927, "Werner Heisenberg", "Uncertainty (no exact paths)",
      "Uncertainty limits knowing position and momentum simultaneously. It supports predicting probabilities instead of single exact trajectories.",
-     "Quantum Mode: why distributions matter."),
-    (1928, "E. Schrödinger", "Wavefunction dynamics",
-     "Schrödinger’s equation evolves ψ over time. The predicted screen pattern comes from |ψ|² (probability density).",
-     "Core: |ψ|² → intensity."),
+     "Werner Heisenberg's contribution"),
     (1961, "Claus Jönsson", "Modern electron double-slit",
      "Jönsson built a clean electron double-slit apparatus with clear fringes. It’s the modern lab version of what we’re simulating here.",
-     "Quantum Mode: classic confirmation."),
+     "Claus Jönsson's contribution"),
     (2020, "Modern Era", "Interference in tech",
      "Interference is now a tool: precision sensing, interferometers, holography, and the logic behind quantum computing uses controlled superposition.",
-     "Why Superposition X matters."),
+     "Why It All Matters Today"),
 ]
 
 def exhibit_header_bounds():
@@ -644,7 +714,7 @@ def draw_exhibit_help():
     panel.fill((20, 20, 26, 240))
     pygame.draw.rect(panel, (110, 110, 130), (0, 0, w, h), width=2, border_radius=16)
     lines = [
-        "HELP (H toggles this)",
+        "HELP MENU",
         "",
         "Exhibition X:",
         "  • Hover a card to expand and reveal what it contributed.",
@@ -800,7 +870,7 @@ def draw_exhibit():
     header_top, safe = exhibit_header_bounds()
 
     title = "Exhibition X"
-    sub   = "Ten milestones explaining how interference became real physics"
+    sub   = "Ten milestones explaining how it all became real physics"
 
     tx = W // 2 - BIG.size(title)[0] // 2
     draw_text(title, tx + 3, header_top + 3, font=BIG, color=(10, 40, 70))
@@ -835,7 +905,7 @@ def draw_menu():
 
     title = "Superposition X"
     sub = "10th Hackathon Edition"
-    hint = "Choose a mode • M returns here anytime • ESC quits"
+    hint = "A Physics Project by Charbel & Benito"
 
     title_y = int(H * 0.18)
     tx = W // 2 - BIG.size(title)[0] // 2
@@ -889,9 +959,8 @@ def build_buttons():
 
 menu_buttons = build_buttons()
 
-# =========================================================
+
 # Main loop
-# =========================================================
 running = True
 noise_timer = 0.0
 
