@@ -2,6 +2,8 @@ import math
 import numpy as np
 import pygame
 
+
+#Starter Math Section
 def sinc(x: np.ndarray) -> np.ndarray:
     '''
     This function is used to compute Sinc(x), which is equal to sin(x)/x. But since x can = 0, we need to compute the limit.
@@ -75,7 +77,7 @@ def build_sampler(height_px: int, px_to_world: float, L: float, lam: float, a: f
     return ys_world, I, pdf, cdf
 
 def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
-      '''
+    '''
     This is a long explanation, so brace yourself.
     In this program, I gave the user the choice to choose between either 10 or 7000 samples per frame. This choice is the value n.
     The n decides the length of the new array r (the number of randomly generated particles per frame).
@@ -91,11 +93,11 @@ def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
     the FIRST index that is larger than itself. 
     '''
     r = rng.random(n)
-    return np.searchsorted(cdf, r, side="right")
+    return np.searchsorted(cdf, r, side="right") #this is the line that sorts the random values to their index.
+    #The side="right" is a safety net: if a random value has the EXACT value as a index, it will "choose" the one on the right
 
-# =========================================================
-# Pygame setup (FULLSCREEN)
-# =========================================================
+
+#Pygame setup
 pygame.init()
 pygame.display.set_caption("Superposition X")
 
@@ -109,13 +111,6 @@ TINY   = pygame.font.SysFont("consolas", 13)
 BIG    = pygame.font.SysFont("consolas", 52)
 MID    = pygame.font.SysFont("consolas", 24)
 
-# Layout
-LEFT_W = int(W * 0.33)
-CENTER_X = LEFT_W
-DETECTOR_X = int(W * 0.82)
-PX_TO_WORLD = 0.02
-
-# Colors / theme
 PLAY_BG = (22, 22, 28)
 PANEL   = (28, 28, 34)
 TXT     = (235, 235, 235)
@@ -127,21 +122,31 @@ RED     = (190, 70, 70)
 
 rng = np.random.default_rng()
 
-# =========================================================
-# CRT overlays (bright)
-# =========================================================
+#Layout for the Wave Mode
+LEFT_W = int(W * 0.33)
+CENTER_X = LEFT_W
+DETECTOR_X = int(W * 0.82)
+PX_TO_WORLD = 0.02 #Chosen arbitrarily; made nice fringes, reasonable spacing, and the interference pattern visible
+
 def build_scanlines_surface(w, h, line_gap=3, alpha=14):
-    s = pygame.Surface((w, h), pygame.SRCALPHA)
-    y = 0
-    while y < h:
-        a = alpha + (y % 9 == 0) * 5
+    '''
+    Purely aesthetic. This creates the "retro lab" theme we were looking for.
+    This creates the small, little gray lines in the game sections.
+    '''
+    s = pygame.Surface((w, h), pygame.SRCALPHA) #SRCALPHA > Transparency supportive
+    y = 0 #starts at the top
+    while y < h: #top to bottom
+        a = alpha + (y % 9 == 0) * 5 #so it's TRUE every 9 pixels. True = 1, False = 0
         pygame.draw.line(s, (160, 160, 160, a), (0, y), (w, y))
-        y += line_gap
-    return s
+        y += line_gap #drawing a line every 3 pixels. BUT, every 9 pixels, the line is a bit brighter. This creates the retro effect. 
+    return s # returns the new surface created 
 
 def build_vignette_surface(w, h, strength=55):
-    v = pygame.Surface((w, h), pygame.SRCALPHA)
-    cx, cy = w / 2, h / 2
+    '''
+    Again, purely aesthetic. This created "darker edges" that gave an old screen vibe (retro lab). 
+    '''
+    v = pygame.Surface((w, h), pygame.SRCALPHA) # New surface, transparency supportive
+    cx, cy = w / 2, h / 2 #Finds the center of the screen
     maxr = math.hypot(cx, cy)
     for i in range(16):
         t = i / 15
