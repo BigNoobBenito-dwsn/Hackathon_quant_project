@@ -75,6 +75,21 @@ def build_sampler(height_px: int, px_to_world: float, L: float, lam: float, a: f
     return ys_world, I, pdf, cdf
 
 def sample_y(cdf: np.ndarray, rng: np.random.Generator, n: int):
+      '''
+    This is a long explanation, so brace yourself.
+    In this program, I gave the user the choice to choose between either 10 or 7000 samples per frame. This choice is the value n.
+    The n decides the length of the new array r (the number of randomly generated particles per frame).
+    So now imagine your r is an array with 300 randomly generated values, between 0 and 1. 
+    These values are going to be SORTED (with the .searchsorted) based on the cdf that we got in the previous functions.
+    So picture this:
+    cdf                 r = [0.05, 0.2, 0.4, 0.6, 1]
+    1= 0.1
+    2= 0.9
+    3= 1
+    Notice the large jump between the 1st and 2nd index. This means that almost ALL of the particles (probability = 80%) will land on y=2.
+    In reality, the cdf has hundreds of indexees, which classify the random values based on probability, because the particle 'chooses'
+    the FIRST index that is larger than itself. 
+    '''
     r = rng.random(n)
     return np.searchsorted(cdf, r, side="right")
 
