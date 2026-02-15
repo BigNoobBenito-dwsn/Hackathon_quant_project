@@ -102,9 +102,12 @@ pygame.init()
 pygame.display.set_caption("Superposition X")
 
 # Windowed mode (not fullscreen)
-W, H = 1400, 800   # you can change this to whatever size you want
-screen = pygame.display.set_mode((W, H))
-clock = pygame.time.Clock()
+ # Fullscreen mode
+screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
+# Get actual screen resolution
+W, H = screen.get_size()
+
 clock = pygame.time.Clock()
 
 FONT   = pygame.font.SysFont("consolas", 18)
